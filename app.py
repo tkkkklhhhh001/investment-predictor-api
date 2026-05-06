@@ -1,12 +1,10 @@
 from flask import Flask, jsonify
-import requests
 import numpy as np
-from datetime import datetime, timedelta
+from datetime import datetime
 import os
+import yfinance as yf
 
 app = Flask(__name__)
-
-ALPHA_VANTAGE_KEY = os.environ.get("ALPHA_VANTAGE_KEY", "demo")
 
 ASSETS = {
     "ai_stocks": [
@@ -24,77 +22,37 @@ ASSETS = {
         {"symbol": "AVGO", "name": "Broadcom"},
     ],
     "gold_usd": [
-        {"symbol": "GOLD", "name": "Gold (USD/oz)", "function": "GOLD"},
-        {"symbol": "DXY", "name": "US Dollar Index", "function": "DXY"},
+        {"symbol": "GC=F", "name": "Gold (USD/oz)", "display": "GOLD"},
+        {"symbol": "DX-Y.NYB", "name": "US Dollar Index", "display": "DXY"},
     ],
     "housing_oil": [
-        {"symbol": "BRENT", "name": "Brent Crude (USD/bbl)", "function": "BRENT"},
-        {"symbol": "HKPI", "name": "HK Property Index", "function": "HKPI"},
+        {"symbol": "BZ=F", "name": "Brent Crude (USD/bbl)", "display": "BRENT"},
+        {"symbol": "0388.HK", "name": "HK Exchanges & Clearing", "display": "HKEX"},
     ],
 }
-
-
-def fetch_stock_price(symbol):
-    """Fetch real stock price from Alpha Vantage."""
-    try:
-        url = "https://www.alphavantage.co/query"
-        params = {
-            "function": "GLOBAL_QUOTE",
-            "symbol": symbol,
-            "apikey": ALPHA_VANTAGE_KEY,
-        }
-        resp = requests.get(url, params=params, timeout=10)
-        data = resp.json()
-        quote = data.get("Global Quote", {})
-        price = float(quote.get("05. price", 0))
-        change_pct = float(quote.get("10. change percent", "0").replace("%", ""))
-        if price > 0:
-            return {"price": price, "change_pct": change_pct}
-    except Exception:
-        pass
-    return None
-
-
-def fetch_commodity_price(function_type):
-    """Fetch commodity prices from Alpha Vantage or use fallback."""
-    try:
-        if function_type == "GOLD":
-            url = "https://www.alphavantage.co/query"
-            params = {
-                "function": "COMMODITY_EXCHANGE_RATE",
-                "from_currency": "XAU",
-                "to_currency": "USD",
-                "apikey": ALPHA_VANTAGE_KEY,
-            }
-            resp = requests.get(url, params=params, timeout=10)
-            data = resp.json()
-            rate_data = data.get("Realtime Currency Exchange Rate", {})
-            price = float(rate_data.get("5. Exchange Rate", 0))
-            if price > 0:
-                return {"price": price}
-        elif function_type == "BRENT":
-            url = "https://www.alphavantage.co/query"
-            params = {
-                "function": "BRENT",
-                "interval": "daily",
-                "apikey": ALPHA_VANTAGE_KEY,
-            }
-            resp = requests.get(url, params=params, timeout=10)
-            data = resp.json()
-            values = data.get("data", [])
-            for v in values:
-                if v.get("value") != ".":
-                    return {"price": float(v["value"])}
-    except Exception:
-        pass
-    return None
-
 
 FALLBACK_PRICES = {
     "NVDA": 890.0, "MSFT": 420.0, "GOOGL": 175.0, "META": 510.0, "AMZN": 185.0,
     "AMD": 165.0, "INTC": 44.0, "QCOM": 170.0, "AVGO": 1350.0,
-    "GOLD": 2350.0, "DXY": 104.5, "BRENT": 82.0, "HKPI": 340.0,
+    "GC=F": 2350.0, "DX-Y.NYB": 104.5, "BZ=F": 82.0, "0388.HK": 340.0,
 }
+
+
+def fetch_price_yfinance(symbol):
+    """Fetch real-time price using yfinance."""
+    try:
+        ticker = yf.Ticker(symbol)
+        info = ticker.fast_info
+        price = info.get("lastPrice", 0) or info.get("last_price", 0)
+        if price and price > 0:
+            return {"price": round(float(price), 2)}
+        hist = ticker.history(period="1d")
+        if not hist.empty:
+            price = hist["Close"].iloc[-1]
+            return {"price": round(float(price), 2)}
+    except Exception as e:
+        print(f"Error fetching {symbol}: {e}")
+    return None
 
 
 def predict(current_price, symbol):
@@ -104,7 +62,7 @@ def predict(current_price, symbol):
     volatility = 0.05
     if symbol in ["NVDA", "AMD"]:
         volatility = 0.08
-    elif symbol in ["GOLD", "DXY", "HKPI"]:
+    elif symbol in ["GC=F", "DX-Y.NYB", "0388.HK"]:
         volatility = 0.03
 
     trend_7d = np.random.normal(0.005, volatility * 0.5)
@@ -147,13 +105,9 @@ def get_predictions_for_category(category):
     for asset in assets:
         symbol = asset["symbol"]
         name = asset["name"]
+        display_symbol = asset.get("display", symbol)
 
-        price_data = None
-        if category in ["ai_stocks", "semi_stocks"]:
-            price_data = fetch_stock_price(symbol)
-        else:
-            func = asset.get("function", "")
-            price_data = fetch_commodity_price(func)
+        price_data = fetch_price_yfinance(symbol)
 
         if price_data and price_data.get("price", 0) > 0:
             current_price = price_data["price"]
@@ -163,7 +117,7 @@ def get_predictions_for_category(category):
         prediction = predict(current_price, symbol + category)
 
         results.append({
-            "symbol": symbol,
+            "symbol": display_symbol,
             "name": name,
             "category": category,
             "currentPrice": round(current_price, 2),
@@ -192,7 +146,7 @@ def all_predictions():
 
 @app.route("/")
 def health():
-    return jsonify({"status": "ok", "message": "Investment Predictor API"})
+    return jsonify({"status": "ok", "message": "Investment Predictor API v3"})
 
 
 if __name__ == "__main__":
