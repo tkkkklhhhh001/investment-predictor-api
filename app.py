@@ -1,10 +1,13 @@
 from flask import Flask, jsonify
+import requests
 import numpy as np
 from datetime import datetime
 import os
-import yfinance as yf
 
 app = Flask(__name__)
+
+FINNHUB_KEY = os.environ.get("FINNHUB_KEY", "")
+ALPHA_VANTAGE_KEY = os.environ.get("ALPHA_VANTAGE_KEY", "")
 
 ASSETS = {
     "ai_stocks": [
@@ -23,7 +26,7 @@ ASSETS = {
     ],
     "gold_usd": [
         {"symbol": "GC=F", "name": "Gold (USD/oz)", "display": "GOLD"},
-        {"symbol": "DX-Y.NYB", "name": "US Dollar Index", "display": "DXY"},
+        {"symbol": "DX=F", "name": "US Dollar Index", "display": "DXY"},
     ],
     "housing_oil": [
         {"symbol": "BZ=F", "name": "Brent Crude (USD/bbl)", "display": "BRENT"},
@@ -34,24 +37,77 @@ ASSETS = {
 FALLBACK_PRICES = {
     "NVDA": 890.0, "MSFT": 420.0, "GOOGL": 175.0, "META": 510.0, "AMZN": 185.0,
     "AMD": 165.0, "INTC": 44.0, "QCOM": 170.0, "AVGO": 1350.0,
-    "GC=F": 2350.0, "DX-Y.NYB": 104.5, "BZ=F": 82.0, "0388.HK": 340.0,
+    "GC=F": 2350.0, "DX=F": 104.5, "BZ=F": 82.0, "0388.HK": 340.0,
 }
 
 
-def fetch_price_yfinance(symbol):
-    """Fetch real-time price using yfinance."""
+def fetch_finnhub(symbol):
+    """Try Finnhub API."""
+    if not FINNHUB_KEY:
+        return None
     try:
-        ticker = yf.Ticker(symbol)
-        info = ticker.fast_info
-        price = info.get("lastPrice", 0) or info.get("last_price", 0)
-        if price and price > 0:
-            return {"price": round(float(price), 2)}
-        hist = ticker.history(period="1d")
-        if not hist.empty:
-            price = hist["Close"].iloc[-1]
-            return {"price": round(float(price), 2)}
+        url = f"https://finnhub.io/api/v1/quote"
+        params = {"symbol": symbol, "token": FINNHUB_KEY}
+        resp = requests.get(url, params=params, timeout=10)
+        data = resp.json()
+        price = data.get("c", 0)
+        if price and float(price) > 0:
+            return {"price": round(float(price), 2), "source": "finnhub"}
     except Exception as e:
-        print(f"Error fetching {symbol}: {e}")
+        print(f"Finnhub error {symbol}: {e}")
+    return None
+
+
+def fetch_alpha_vantage(symbol):
+    """Try Alpha Vantage API."""
+    if not ALPHA_VANTAGE_KEY:
+        return None
+    try:
+        url = "https://www.alphavantage.co/query"
+        params = {"function": "GLOBAL_QUOTE", "symbol": symbol, "apikey": ALPHA_VANTAGE_KEY}
+        resp = requests.get(url, params=params, timeout=10)
+        data = resp.json()
+        quote = data.get("Global Quote", {})
+        price = float(quote.get("05. price", 0))
+        if price > 0:
+            return {"price": round(price, 2), "source": "alpha_vantage"}
+    except Exception as e:
+        print(f"AlphaVantage error {symbol}: {e}")
+    return None
+
+
+def fetch_yahoo_v8(symbol):
+    """Try Yahoo Finance v8 API directly."""
+    try:
+        url = f"https://query2.finance.yahoo.com/v8/finance/chart/{symbol}"
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+        }
+        params = {"interval": "1d", "range": "1d"}
+        resp = requests.get(url, headers=headers, params=params, timeout=10)
+        data = resp.json()
+        result = data.get("chart", {}).get("result", [])
+        if result:
+            meta = result[0].get("meta", {})
+            price = meta.get("regularMarketPrice", 0)
+            if price and float(price) > 0:
+                return {"price": round(float(price), 2), "source": "yahoo"}
+    except Exception as e:
+        print(f"Yahoo error {symbol}: {e}")
+    return None
+
+
+def fetch_price(symbol):
+    """Try multiple sources in order."""
+    result = fetch_finnhub(symbol)
+    if result:
+        return result
+    result = fetch_alpha_vantage(symbol)
+    if result:
+        return result
+    result = fetch_yahoo_v8(symbol)
+    if result:
+        return result
     return None
 
 
@@ -62,7 +118,7 @@ def predict(current_price, symbol):
     volatility = 0.05
     if symbol in ["NVDA", "AMD"]:
         volatility = 0.08
-    elif symbol in ["GC=F", "DX-Y.NYB", "0388.HK"]:
+    elif symbol in ["GC=F", "DX=F", "0388.HK"]:
         volatility = 0.03
 
     trend_7d = np.random.normal(0.005, volatility * 0.5)
@@ -107,12 +163,14 @@ def get_predictions_for_category(category):
         name = asset["name"]
         display_symbol = asset.get("display", symbol)
 
-        price_data = fetch_price_yfinance(symbol)
+        price_data = fetch_price(symbol)
 
         if price_data and price_data.get("price", 0) > 0:
             current_price = price_data["price"]
+            source = price_data["source"]
         else:
             current_price = FALLBACK_PRICES.get(symbol, 100.0)
+            source = "fallback"
 
         prediction = predict(current_price, symbol + category)
 
@@ -121,6 +179,7 @@ def get_predictions_for_category(category):
             "name": name,
             "category": category,
             "currentPrice": round(current_price, 2),
+            "source": source,
             **prediction,
         })
 
@@ -144,9 +203,31 @@ def all_predictions():
     return jsonify(result)
 
 
+@app.route("/api/test")
+def test_apis():
+    """Test which APIs work from this server."""
+    results = {}
+    test_symbol = "AAPL"
+
+    results["finnhub"] = {"key_set": bool(FINNHUB_KEY)}
+    if FINNHUB_KEY:
+        r = fetch_finnhub(test_symbol)
+        results["finnhub"]["result"] = r
+
+    results["alpha_vantage"] = {"key_set": bool(ALPHA_VANTAGE_KEY)}
+    if ALPHA_VANTAGE_KEY:
+        r = fetch_alpha_vantage(test_symbol)
+        results["alpha_vantage"]["result"] = r
+
+    r = fetch_yahoo_v8(test_symbol)
+    results["yahoo"] = {"result": r}
+
+    return jsonify(results)
+
+
 @app.route("/")
 def health():
-    return jsonify({"status": "ok", "message": "Investment Predictor API v3"})
+    return jsonify({"status": "ok", "message": "Investment Predictor API v5"})
 
 
 if __name__ == "__main__":
