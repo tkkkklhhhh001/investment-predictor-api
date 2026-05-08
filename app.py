@@ -46,6 +46,10 @@ AI_NEWS_COMPANIES = [
     {"name": "OpenAI", "query": "OpenAI+Sam+Altman"},
     {"name": "Anthropic", "query": "Anthropic+Dario+Amodei+Claude"},
     {"name": "Amazon", "query": "Amazon+Andy+Jassy+AI"},
+    {"name": "Intel", "query": "Intel+Pat+Gelsinger+AI+chip"},
+    {"name": "Qualcomm", "query": "Qualcomm+Cristiano+Amon+AI"},
+    {"name": "Samsung", "query": "Samsung+semiconductor+AI+chip"},
+    {"name": "Apple", "query": "Apple+Tim+Cook+AI"},
 ]
 
 FALLBACK_PRICES = {
