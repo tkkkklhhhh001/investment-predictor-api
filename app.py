@@ -131,6 +131,110 @@ def generate_predicted_prices(current_price, symbol, days=30):
     return prices
 
 
+PREDICTION_REASONS = {
+    "NVDA": {
+        "factors": ["GPU demand for AI training remains strong", "Data center revenue growth acceleration",
+                    "CUDA ecosystem lock-in advantage", "Next-gen Blackwell architecture adoption"],
+        "risks": ["High valuation multiple", "China export restrictions", "Customer concentration risk"]
+    },
+    "MSFT": {
+        "factors": ["Azure AI services revenue growth", "Copilot enterprise adoption expanding",
+                    "OpenAI partnership monetization", "Office 365 price increases"],
+        "risks": ["AI investment CAPEX pressure on margins", "Antitrust scrutiny"]
+    },
+    "GOOGL": {
+        "factors": ["Search AI integration (Gemini)", "Cloud revenue growth with AI workloads",
+                    "YouTube ad revenue recovery", "Waymo autonomous driving progress"],
+        "risks": ["Search market share pressure from AI chatbots", "DOJ antitrust ruling"]
+    },
+    "META": {
+        "factors": ["Reels monetization improving", "AI-driven ad targeting efficiency",
+                    "WhatsApp business API growth", "Llama open-source model ecosystem"],
+        "risks": ["Reality Labs continued losses", "Regulatory pressure on data usage"]
+    },
+    "AMZN": {
+        "factors": ["AWS AI/ML workload growth", "Retail margin improvement",
+                    "Advertising business acceleration", "Alexa AI upgrade potential"],
+        "risks": ["Retail competition", "Heavy CAPEX spending cycle"]
+    },
+    "AMD": {
+        "factors": ["MI300X AI accelerator ramp", "Data center GPU market share gains",
+                    "EPYC server CPU momentum", "AI PC chip cycle"],
+        "risks": ["NVIDIA competitive moat", "Inventory correction risk"]
+    },
+    "INTC": {
+        "factors": ["Foundry services progress (18A node)", "Government CHIPS Act funding",
+                    "AI PC refresh cycle", "Gaudi AI accelerator traction"],
+        "risks": ["Execution risk on node transitions", "Market share loss continues", "Cash burn from foundry buildout"]
+    },
+    "QCOM": {
+        "factors": ["Snapdragon X Elite for AI PCs", "On-device AI inference leadership",
+                    "Automotive chip design wins", "IoT diversification"],
+        "risks": ["Smartphone market cyclicality", "Apple modem transition", "ARM license dispute"]
+    },
+    "AVGO": {
+        "factors": ["Custom AI accelerator demand (Google TPU)", "VMware integration synergies",
+                    "Networking silicon for AI clusters", "Stable dividend growth"],
+        "risks": ["Customer concentration", "Integration execution risk"]
+    },
+    "TSM": {
+        "factors": ["3nm/2nm capacity ramp for AI chips", "Sole advanced node manufacturer",
+                    "CoWoS packaging demand surge", "Global fab diversification (Arizona, Japan)"],
+        "risks": ["Geopolitical Taiwan risk", "CAPEX cycle intensity", "Customer demand volatility"]
+    },
+    "005930.KS": {
+        "factors": ["HBM3E memory for AI servers", "Memory cycle upturn",
+                    "Foundry 2nm GAA technology", "Galaxy AI device ecosystem"],
+        "risks": ["HBM yield challenges vs SK Hynix", "China market uncertainty", "Won currency volatility"]
+    },
+    "MU": {
+        "factors": ["HBM demand from AI GPU makers", "Memory pricing recovery",
+                    "Data center DRAM growth", "NAND supply discipline"],
+        "risks": ["Memory cycle volatility", "China ban on certain products", "CAPEX timing"]
+    },
+    "000660.KS": {
+        "factors": ["HBM market leader (supplying NVIDIA)", "Memory price upcycle",
+                    "Advanced packaging technology lead", "AI server DRAM content growth"],
+        "risks": ["Capacity expansion costs", "Technology competition from Samsung", "Won currency risk"]
+    },
+    "GC=F": {
+        "factors": ["Central bank gold buying continues", "Geopolitical uncertainty hedge",
+                    "Real interest rate trajectory", "De-dollarization trend"],
+        "risks": ["Strong USD pressure", "Risk-on market sentiment shift", "ETF outflows"]
+    },
+    "CNY=X": {
+        "factors": ["US-China yield differential", "PBoC policy direction",
+                    "Trade balance dynamics", "Capital flow trends"],
+        "risks": ["Fed rate path uncertainty", "China economic slowdown", "Geopolitical tensions"]
+    },
+}
+
+DEFAULT_REASONS = {
+    "factors": ["Technical momentum signals", "Sector trend alignment", "Historical pattern matching"],
+    "risks": ["Market volatility", "Macro uncertainty"]
+}
+
+
+def get_prediction_reasons(symbol, trend):
+    """Get prediction reasoning for a symbol."""
+    reasons = PREDICTION_REASONS.get(symbol, DEFAULT_REASONS)
+    factors = reasons["factors"]
+    risks = reasons["risks"]
+
+    if trend == "UP":
+        summary = "Bullish outlook driven by strong fundamental catalysts"
+    elif trend == "DOWN":
+        summary = "Cautious outlook due to elevated risk factors"
+    else:
+        summary = "Neutral stance with balanced bull/bear factors"
+
+    return {
+        "summary": summary,
+        "bullFactors": factors,
+        "riskFactors": risks,
+    }
+
+
 def save_daily_prediction(symbol, date_str, predicted_prices):
     """Save today's prediction to disk so we can compare later."""
     filepath = os.path.join(DATA_DIR, f"{symbol.replace('=', '_').replace('.', '_')}.json")
@@ -255,6 +359,7 @@ def fetch_asset_data(asset, category, cny_rate, today_str):
 
     prediction = predict(current_price, symbol + category)
     predicted_prices = generate_predicted_prices(current_price, symbol)
+    reasons = get_prediction_reasons(symbol, prediction["trend"])
 
     save_daily_prediction(symbol, today_str, predicted_prices)
 
@@ -269,6 +374,7 @@ def fetch_asset_data(asset, category, cny_rate, today_str):
         "historyPrices": history_prices,
         "predictedPrices": predicted_prices,
         "comparison": comparison,
+        "reasons": reasons,
         **prediction,
     }
 
