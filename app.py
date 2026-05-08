@@ -13,6 +13,7 @@ app = Flask(__name__)
 
 DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "prediction_history")
 os.makedirs(DATA_DIR, exist_ok=True)
+NEWS_CACHE_FILE = os.path.join(DATA_DIR, "news_cache.json")
 
 ASSETS = {
     "ai_stocks": [
