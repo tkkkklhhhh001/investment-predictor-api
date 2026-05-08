@@ -40,17 +40,17 @@ ASSETS = {
 }
 
 AI_NEWS_COMPANIES = [
-    {"name": "NVIDIA", "query": "NVIDIA+Jensen+Huang"},
-    {"name": "Microsoft", "query": "Microsoft+Satya+Nadella+AI"},
-    {"name": "Google", "query": "Google+DeepMind+Sundar+Pichai+AI"},
-    {"name": "Meta", "query": "Meta+Mark+Zuckerberg+AI"},
+    {"name": "NVIDIA", "query": "NVDA"},
+    {"name": "Microsoft", "query": "MSFT"},
+    {"name": "Google", "query": "GOOGL"},
+    {"name": "Meta", "query": "META"},
     {"name": "OpenAI", "query": "OpenAI+Sam+Altman"},
     {"name": "Anthropic", "query": "Anthropic+Dario+Amodei+Claude"},
-    {"name": "Amazon", "query": "Amazon+Andy+Jassy+AI"},
-    {"name": "Intel", "query": "Intel+Pat+Gelsinger+AI+chip"},
-    {"name": "Qualcomm", "query": "Qualcomm+Cristiano+Amon+AI"},
-    {"name": "Samsung", "query": "Samsung+semiconductor+AI+chip"},
-    {"name": "Apple", "query": "Apple+Tim+Cook+AI"},
+    {"name": "Amazon", "query": "AMZN"},
+    {"name": "Intel", "query": "INTC"},
+    {"name": "Qualcomm", "query": "QCOM"},
+    {"name": "Samsung", "query": "005930.KS"},
+    {"name": "Apple", "query": "AAPL"},
 ]
 
 FALLBACK_PRICES = {
@@ -471,28 +471,44 @@ def news_importance_score(item):
 
 
 def fetch_google_news_rss(query, num=5):
-    """Fetch news from Google News RSS."""
+    """Fetch news from multiple RSS sources with fallback."""
+    items = []
+
+    # Try Yahoo Finance RSS first (more reliable from cloud)
     try:
-        url = f"https://news.google.com/rss/search?q={query}&hl=en-US&gl=US&ceid=US:en"
+        symbol = query.split("+")[0]
+        url = f"https://feeds.finance.yahoo.com/rss/2.0/headline?s={symbol}&region=US&lang=en-US"
         headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
-        resp = requests.get(url, headers=headers, timeout=10)
-        root = ET.fromstring(resp.content)
-        items = []
-        for item in root.findall(".//item")[:num]:
-            title = item.find("title").text if item.find("title") is not None else ""
-            link = item.find("link").text if item.find("link") is not None else ""
-            pub_date = item.find("pubDate").text if item.find("pubDate") is not None else ""
-            source = item.find("source").text if item.find("source") is not None else ""
-            items.append({
-                "title": title,
-                "link": link,
-                "pubDate": pub_date,
-                "source": source,
-            })
-        return items
+        resp = requests.get(url, headers=headers, timeout=8)
+        if resp.status_code == 200:
+            root = ET.fromstring(resp.content)
+            for item in root.findall(".//item")[:num]:
+                title = item.find("title").text if item.find("title") is not None else ""
+                link = item.find("link").text if item.find("link") is not None else ""
+                pub_date = item.find("pubDate").text if item.find("pubDate") is not None else ""
+                source = "Yahoo Finance"
+                items.append({"title": title, "link": link, "pubDate": pub_date, "source": source})
     except Exception as e:
-        print(f"News fetch error for {query}: {e}")
-        return []
+        print(f"Yahoo RSS error for {query}: {e}")
+
+    # Fallback to Google News RSS
+    if not items:
+        try:
+            url = f"https://news.google.com/rss/search?q={query}&hl=en-US&gl=US&ceid=US:en"
+            headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+            resp = requests.get(url, headers=headers, timeout=8)
+            if resp.status_code == 200:
+                root = ET.fromstring(resp.content)
+                for item in root.findall(".//item")[:num]:
+                    title = item.find("title").text if item.find("title") is not None else ""
+                    link = item.find("link").text if item.find("link") is not None else ""
+                    pub_date = item.find("pubDate").text if item.find("pubDate") is not None else ""
+                    source = item.find("source").text if item.find("source") is not None else ""
+                    items.append({"title": title, "link": link, "pubDate": pub_date, "source": source})
+        except Exception as e:
+            print(f"Google News error for {query}: {e}")
+
+    return items
 
 
 def get_ai_news():
