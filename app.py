@@ -7,6 +7,7 @@ import json
 import xml.etree.ElementTree as ET
 import re
 import hashlib
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 app = Flask(__name__)
 
@@ -55,6 +56,7 @@ AI_NEWS_COMPANIES = [
 FALLBACK_PRICES = {
     "NVDA": 890.0, "MSFT": 420.0, "GOOGL": 175.0, "META": 510.0, "AMZN": 185.0,
     "AMD": 165.0, "INTC": 44.0, "QCOM": 170.0, "AVGO": 1350.0,
+    "TSM": 160.0, "005930.KS": 75000.0, "MU": 120.0, "000660.KS": 180000.0,
     "GC=F": 2350.0, "CNY=X": 7.25,
 }
 
@@ -230,53 +232,71 @@ def predict(current_price, symbol):
     }
 
 
+def fetch_asset_data(asset, category, cny_rate, today_str):
+    """Fetch data for a single asset (used in parallel)."""
+    symbol = asset["symbol"]
+    name = asset["name"]
+    display_symbol = asset.get("display", symbol)
+
+    price_data = fetch_price(symbol)
+    history_prices, history_dates = fetch_yahoo_history(symbol, 30)
+
+    if price_data and price_data.get("price", 0) > 0:
+        current_price = price_data["price"]
+        source = price_data["source"]
+    else:
+        current_price = FALLBACK_PRICES.get(symbol, 100.0)
+        source = "fallback"
+
+    if category == "gold_usd" and cny_rate:
+        if symbol == "GC=F":
+            current_price = round(current_price * cny_rate / 31.1035, 2)
+            history_prices = [round(p * cny_rate / 31.1035, 2) for p in history_prices]
+
+    prediction = predict(current_price, symbol + category)
+    predicted_prices = generate_predicted_prices(current_price, symbol)
+
+    save_daily_prediction(symbol, today_str, predicted_prices)
+
+    comparison = build_comparison(symbol, history_prices, history_dates, predicted_prices)
+
+    return {
+        "symbol": display_symbol,
+        "name": name,
+        "category": category,
+        "currentPrice": round(current_price, 2),
+        "source": source,
+        "historyPrices": history_prices,
+        "predictedPrices": predicted_prices,
+        "comparison": comparison,
+        **prediction,
+    }
+
+
 def get_predictions_for_category(category):
     assets = ASSETS.get(category, [])
-    results = []
     today_str = datetime.now().strftime("%Y-%m-%d")
 
     cny_rate = None
     if category == "gold_usd":
         cny_rate = get_cny_rate()
 
-    for asset in assets:
-        symbol = asset["symbol"]
-        name = asset["name"]
-        display_symbol = asset.get("display", symbol)
+    results = []
+    with ThreadPoolExecutor(max_workers=5) as executor:
+        futures = {
+            executor.submit(fetch_asset_data, asset, category, cny_rate, today_str): asset
+            for asset in assets
+        }
+        for future in as_completed(futures):
+            try:
+                result = future.result(timeout=20)
+                results.append(result)
+            except Exception as e:
+                asset = futures[future]
+                print(f"Error fetching {asset['symbol']}: {e}")
 
-        price_data = fetch_price(symbol)
-        history_prices, history_dates = fetch_yahoo_history(symbol, 30)
-
-        if price_data and price_data.get("price", 0) > 0:
-            current_price = price_data["price"]
-            source = price_data["source"]
-        else:
-            current_price = FALLBACK_PRICES.get(symbol, 100.0)
-            source = "fallback"
-
-        if category == "gold_usd" and cny_rate:
-            if symbol == "GC=F":
-                current_price = round(current_price * cny_rate / 31.1035, 2)
-                history_prices = [round(p * cny_rate / 31.1035, 2) for p in history_prices]
-
-        prediction = predict(current_price, symbol + category)
-        predicted_prices = generate_predicted_prices(current_price, symbol)
-
-        save_daily_prediction(symbol, today_str, predicted_prices)
-
-        comparison = build_comparison(symbol, history_prices, history_dates, predicted_prices)
-
-        results.append({
-            "symbol": display_symbol,
-            "name": name,
-            "category": category,
-            "currentPrice": round(current_price, 2),
-            "source": source,
-            "historyPrices": history_prices,
-            "predictedPrices": predicted_prices,
-            "comparison": comparison,
-            **prediction,
-        })
+    order = [a.get("display", a["symbol"]) for a in assets]
+    results.sort(key=lambda x: order.index(x["symbol"]) if x["symbol"] in order else 999)
 
     return results
 
