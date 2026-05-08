@@ -519,55 +519,59 @@ def fetch_google_news_rss(query, num=5):
     return items
 
 
-def resolve_google_news_link(google_link):
-    """Not used anymore - kept for reference."""
-    return google_link
+def decode_google_news_url(google_url):
+    """Decode Google News encoded URL to get the actual article URL."""
+    import base64
+    try:
+        # Extract encoded part after /articles/
+        if "/articles/" not in google_url:
+            return google_url
+        encoded = google_url.split("/articles/")[-1].split("?")[0]
+        # Add base64 padding
+        padding = 4 - len(encoded) % 4
+        if padding != 4:
+            encoded += "=" * padding
+        # Decode (URL-safe base64)
+        decoded = base64.urlsafe_b64decode(encoded)
+        # Find the embedded URL in the protobuf bytes
+        decoded_str = decoded.decode("latin-1")
+        http_idx = decoded_str.find("http")
+        if http_idx >= 0:
+            url = decoded_str[http_idx:]
+            # URL ends at first control character
+            end = len(url)
+            for i, c in enumerate(url):
+                if ord(c) < 32 or ord(c) > 126:
+                    end = i
+                    break
+            return url[:end]
+    except:
+        pass
+    return google_url
 
 
 def fetch_chinese_news(query, num=3):
-    """Fetch Chinese news directly from Chinese sources (36Kr, Sina, cls.cn)."""
+    """Fetch Chinese news via Google News RSS with decoded direct article links."""
     items = []
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Accept-Language": "zh-CN,zh;q=0.9"
-    }
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
     from urllib.parse import quote
 
-    # Source 1: Sina Finance search API (fast, reliable from overseas)
     try:
-        sina_url = f"https://interface.sina.cn/news/search/article_list.d.json?q={quote(query)}&sort=time&page=1&num={num}"
-        resp = requests.get(sina_url, headers=headers, timeout=5)
+        url = f"https://news.google.com/rss/search?q={quote(query)}&hl=zh-CN&gl=CN&ceid=CN:zh-Hans"
+        resp = requests.get(url, headers=headers, timeout=8)
         if resp.status_code == 200:
-            data = resp.json()
-            articles = data.get("result", {}).get("list", [])
-            for art in articles[:num]:
-                title = re.sub(r'<[^>]+>', '', art.get("title", "")).strip()
-                link = art.get("url", "")
-                pub_date = art.get("ctime", "")
-                source = art.get("media", "新浪")
-                if title and link:
+            root = ET.fromstring(resp.content)
+            for item in root.findall(".//item")[:num]:
+                title = item.find("title").text if item.find("title") is not None else ""
+                raw_link = item.find("link").text if item.find("link") is not None else ""
+                pub_date = item.find("pubDate").text if item.find("pubDate") is not None else ""
+                source = item.find("source").text if item.find("source") is not None else ""
+                # Decode Google redirect to get actual article URL
+                link = decode_google_news_url(raw_link) if raw_link else ""
+                if title:
                     items.append({"title": title, "link": link, "pubDate": pub_date, "source": source})
     except Exception as e:
-        print(f"Sina news error for {query}: {e}")
-
-    # Source 2: 36Kr (only if Sina returned nothing)
-    if not items:
-        try:
-            kr_url = f"https://gateway.36kr.com/api/mis/nav/search/suggest?keyword={quote(query)}&size={num}"
-            resp = requests.get(kr_url, headers=headers, timeout=5)
-            if resp.status_code == 200:
-                data = resp.json()
-                item_list = data.get("data", {}).get("itemList", [])
-                for it in item_list[:num]:
-                    title = it.get("title", "") or it.get("templateMaterial", {}).get("widgetTitle", "")
-                    item_id = it.get("itemId", "") or it.get("id", "")
-                    title = re.sub(r'<[^>]+>', '', title).strip()
-                    link = f"https://36kr.com/p/{item_id}" if item_id else ""
-                    pub_date = it.get("publishTime", "")
-                    if title and link:
-                        items.append({"title": title, "link": link, "pubDate": pub_date, "source": "36氪"})
-        except Exception as e:
-            print(f"36Kr news error for {query}: {e}")
+        print(f"Chinese news error for {query}: {e}")
 
     return items
 
