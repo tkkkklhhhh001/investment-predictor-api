@@ -586,6 +586,22 @@ def test_apis():
     results["yahoo"] = {"result": r}
     cny = get_cny_rate()
     results["cny_rate"] = cny
+
+    # Test news fetching
+    try:
+        url = "https://query2.finance.yahoo.com/v1/finance/search"
+        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+        params = {"q": "NVDA", "newsCount": 3, "quotesCount": 0}
+        resp = requests.get(url, headers=headers, params=params, timeout=8)
+        results["news_test"] = {
+            "status": resp.status_code,
+            "has_news": "news" in resp.json() if resp.status_code == 200 else False,
+            "news_count": len(resp.json().get("news", [])) if resp.status_code == 200 else 0,
+            "raw_keys": list(resp.json().keys()) if resp.status_code == 200 else [],
+        }
+    except Exception as e:
+        results["news_test"] = {"error": str(e)}
+
     return jsonify(results)
 
 
