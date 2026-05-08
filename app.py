@@ -300,7 +300,48 @@ def all_predictions():
 
 # --- AI News Feature ---
 
-NEWS_CACHE_FILE = os.path.join(DATA_DIR, "news_cache.json")
+MAJOR_SOURCES = ["Reuters", "Bloomberg", "CNBC", "The Wall Street Journal", "Financial Times",
+                  "The New York Times", "TechCrunch", "The Verge", "Wired", "Associated Press"]
+CXO_NAMES = ["Jensen Huang", "Satya Nadella", "Sundar Pichai", "Mark Zuckerberg", "Sam Altman",
+             "Dario Amodei", "Tim Cook", "Pat Gelsinger", "Cristiano Amon", "Andy Jassy", "Lisa Su"]
+
+
+def news_importance_score(item):
+    """Score news by importance: source reputation + CXO mention + recency."""
+    score = 0
+    title = item.get("title", "")
+    source = item.get("source", "")
+
+    if any(s.lower() in source.lower() for s in MAJOR_SOURCES):
+        score += 50
+
+    if any(name.lower() in title.lower() for name in CXO_NAMES):
+        score += 40
+
+    keywords = ["CEO", "CTO", "announce", "launch", "billion", "acquire", "partnership",
+                "breakthrough", "record", "earnings", "revenue"]
+    for kw in keywords:
+        if kw.lower() in title.lower():
+            score += 10
+            break
+
+    pub = item.get("pubDate", "")
+    try:
+        from email.utils import parsedate_to_datetime
+        dt = parsedate_to_datetime(pub)
+        hours_ago = (datetime.now(dt.tzinfo) - dt).total_seconds() / 3600
+        if hours_ago < 6:
+            score += 30
+        elif hours_ago < 24:
+            score += 20
+        elif hours_ago < 48:
+            score += 10
+    except:
+        pass
+
+    return score
+
+
 
 
 def fetch_google_news_rss(query, num=5):
@@ -360,7 +401,7 @@ def get_ai_news():
             item["company"] = company["name"]
         all_news.extend(items)
 
-    all_news.sort(key=lambda x: x.get("pubDate", ""), reverse=True)
+    all_news.sort(key=lambda x: news_importance_score(x), reverse=True)
 
     cache = {
         "last_update": now.strftime("%Y-%m-%d %H:%M"),
