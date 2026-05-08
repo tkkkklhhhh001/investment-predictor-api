@@ -25,55 +25,23 @@ ASSETS = {
         {"symbol": "AVGO", "name": "Broadcom"},
     ],
     "gold_usd": [
-        {"symbol": "GC=F", "name": "Gold (USD/oz)", "display": "GOLD"},
-        {"symbol": "DX=F", "name": "US Dollar Index", "display": "DXY"},
+        {"symbol": "GC=F", "name": "Gold (CNY/g)", "display": "GOLD"},
+        {"symbol": "DX-Y.NYB", "name": "USD/CNY Rate", "display": "USD/CNY"},
     ],
-    "housing_oil": [
-        {"symbol": "BZ=F", "name": "Brent Crude (USD/bbl)", "display": "BRENT"},
-        {"symbol": "0388.HK", "name": "HK Exchanges & Clearing", "display": "HKEX"},
+    "housing": [
+        {"symbol": "0012.HK", "name": "Henderson Land Dev", "display": "HKLAND"},
+        {"symbol": "0016.HK", "name": "SHK Properties", "display": "SHKP"},
+        {"symbol": "0001.HK", "name": "CK Asset Holdings", "display": "CKA"},
     ],
 }
 
 FALLBACK_PRICES = {
     "NVDA": 890.0, "MSFT": 420.0, "GOOGL": 175.0, "META": 510.0, "AMZN": 185.0,
     "AMD": 165.0, "INTC": 44.0, "QCOM": 170.0, "AVGO": 1350.0,
-    "GC=F": 2350.0, "DX=F": 104.5, "BZ=F": 82.0, "0388.HK": 340.0,
+    "GC=F": 2350.0, "DX-Y.NYB": 7.25, "0012.HK": 23.0, "0016.HK": 80.0, "0001.HK": 38.0,
 }
 
-
-def fetch_finnhub(symbol):
-    """Try Finnhub API."""
-    if not FINNHUB_KEY:
-        return None
-    try:
-        url = f"https://finnhub.io/api/v1/quote"
-        params = {"symbol": symbol, "token": FINNHUB_KEY}
-        resp = requests.get(url, params=params, timeout=10)
-        data = resp.json()
-        price = data.get("c", 0)
-        if price and float(price) > 0:
-            return {"price": round(float(price), 2), "source": "finnhub"}
-    except Exception as e:
-        print(f"Finnhub error {symbol}: {e}")
-    return None
-
-
-def fetch_alpha_vantage(symbol):
-    """Try Alpha Vantage API."""
-    if not ALPHA_VANTAGE_KEY:
-        return None
-    try:
-        url = "https://www.alphavantage.co/query"
-        params = {"function": "GLOBAL_QUOTE", "symbol": symbol, "apikey": ALPHA_VANTAGE_KEY}
-        resp = requests.get(url, params=params, timeout=10)
-        data = resp.json()
-        quote = data.get("Global Quote", {})
-        price = float(quote.get("05. price", 0))
-        if price > 0:
-            return {"price": round(price, 2), "source": "alpha_vantage"}
-    except Exception as e:
-        print(f"AlphaVantage error {symbol}: {e}")
-    return None
+CNY_RATE_FALLBACK = 7.25
 
 
 def fetch_yahoo_v8(symbol):
@@ -97,14 +65,36 @@ def fetch_yahoo_v8(symbol):
     return None
 
 
+def fetch_yahoo_history(symbol, days=30):
+    """Fetch historical closing prices from Yahoo v8."""
+    try:
+        url = f"https://query2.finance.yahoo.com/v8/finance/chart/{symbol}"
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+        }
+        params = {"interval": "1d", "range": f"{days}d"}
+        resp = requests.get(url, headers=headers, params=params, timeout=15)
+        data = resp.json()
+        result = data.get("chart", {}).get("result", [])
+        if result:
+            closes = result[0].get("indicators", {}).get("quote", [{}])[0].get("close", [])
+            prices = [round(p, 2) for p in closes if p is not None]
+            return prices
+    except Exception as e:
+        print(f"Yahoo history error {symbol}: {e}")
+    return []
+
+
+def get_cny_rate():
+    """Get USD/CNY exchange rate."""
+    result = fetch_yahoo_v8("CNY=X")
+    if result and result.get("price", 0) > 0:
+        return result["price"]
+    return CNY_RATE_FALLBACK
+
+
 def fetch_price(symbol):
-    """Try multiple sources in order."""
-    result = fetch_finnhub(symbol)
-    if result:
-        return result
-    result = fetch_alpha_vantage(symbol)
-    if result:
-        return result
+    """Fetch current price from Yahoo."""
     result = fetch_yahoo_v8(symbol)
     if result:
         return result
@@ -118,7 +108,7 @@ def predict(current_price, symbol):
     volatility = 0.05
     if symbol in ["NVDA", "AMD"]:
         volatility = 0.08
-    elif symbol in ["GC=F", "DX=F", "0388.HK"]:
+    elif symbol in ["GC=F", "DX-Y.NYB", "0012.HK", "0016.HK", "0001.HK"]:
         volatility = 0.03
 
     trend_7d = np.random.normal(0.005, volatility * 0.5)
@@ -154,9 +144,26 @@ def predict(current_price, symbol):
     }
 
 
+def generate_predicted_prices(current_price, symbol, days=7):
+    """Generate a list of predicted daily prices."""
+    np.random.seed(hash(symbol + "pred" + datetime.now().strftime("%Y-%m-%d")) % 2**31)
+    volatility = 0.02
+    if symbol in ["NVDA", "AMD"]:
+        volatility = 0.035
+    prices = [current_price]
+    for i in range(days - 1):
+        change = np.random.normal(0.001, volatility)
+        prices.append(round(prices[-1] * (1 + change), 2))
+    return prices
+
+
 def get_predictions_for_category(category):
     assets = ASSETS.get(category, [])
     results = []
+
+    cny_rate = None
+    if category == "gold_usd":
+        cny_rate = get_cny_rate()
 
     for asset in assets:
         symbol = asset["symbol"]
@@ -164,6 +171,7 @@ def get_predictions_for_category(category):
         display_symbol = asset.get("display", symbol)
 
         price_data = fetch_price(symbol)
+        history = fetch_yahoo_history(symbol, 30)
 
         if price_data and price_data.get("price", 0) > 0:
             current_price = price_data["price"]
@@ -172,7 +180,16 @@ def get_predictions_for_category(category):
             current_price = FALLBACK_PRICES.get(symbol, 100.0)
             source = "fallback"
 
+        if category == "gold_usd" and cny_rate:
+            if symbol == "GC=F":
+                current_price = round(current_price * cny_rate / 31.1035, 2)
+                history = [round(p * cny_rate / 31.1035, 2) for p in history]
+            elif symbol == "DX-Y.NYB":
+                current_price = cny_rate
+                history = history if history else [cny_rate]
+
         prediction = predict(current_price, symbol + category)
+        predicted_prices = generate_predicted_prices(current_price, symbol)
 
         results.append({
             "symbol": display_symbol,
@@ -180,6 +197,8 @@ def get_predictions_for_category(category):
             "category": category,
             "currentPrice": round(current_price, 2),
             "source": source,
+            "historyPrices": history,
+            "predictedPrices": predicted_prices,
             **prediction,
         })
 
@@ -188,7 +207,7 @@ def get_predictions_for_category(category):
 
 @app.route("/api/predictions/<category>")
 def predictions(category):
-    valid = ["ai_stocks", "semi_stocks", "gold_usd", "housing_oil"]
+    valid = ["ai_stocks", "semi_stocks", "gold_usd", "housing"]
     if category not in valid:
         return jsonify({"error": "Invalid category"}), 400
     data = get_predictions_for_category(category)
@@ -198,7 +217,7 @@ def predictions(category):
 @app.route("/api/predictions")
 def all_predictions():
     result = {}
-    for cat in ["ai_stocks", "semi_stocks", "gold_usd", "housing_oil"]:
+    for cat in ["ai_stocks", "semi_stocks", "gold_usd", "housing"]:
         result[cat] = get_predictions_for_category(cat)
     return jsonify(result)
 
@@ -209,25 +228,18 @@ def test_apis():
     results = {}
     test_symbol = "AAPL"
 
-    results["finnhub"] = {"key_set": bool(FINNHUB_KEY)}
-    if FINNHUB_KEY:
-        r = fetch_finnhub(test_symbol)
-        results["finnhub"]["result"] = r
-
-    results["alpha_vantage"] = {"key_set": bool(ALPHA_VANTAGE_KEY)}
-    if ALPHA_VANTAGE_KEY:
-        r = fetch_alpha_vantage(test_symbol)
-        results["alpha_vantage"]["result"] = r
-
     r = fetch_yahoo_v8(test_symbol)
     results["yahoo"] = {"result": r}
+
+    cny = get_cny_rate()
+    results["cny_rate"] = cny
 
     return jsonify(results)
 
 
 @app.route("/")
 def health():
-    return jsonify({"status": "ok", "message": "Investment Predictor API v5"})
+    return jsonify({"status": "ok", "message": "Investment Predictor API v6"})
 
 
 if __name__ == "__main__":
