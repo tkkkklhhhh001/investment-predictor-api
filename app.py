@@ -44,6 +44,7 @@ AI_NEWS_COMPANIES = [
     {"name": "Google", "query": "Google+DeepMind+Sundar+Pichai+AI"},
     {"name": "Meta", "query": "Meta+Mark+Zuckerberg+AI"},
     {"name": "OpenAI", "query": "OpenAI+Sam+Altman"},
+    {"name": "Anthropic", "query": "Anthropic+Dario+Amodei+Claude"},
     {"name": "Amazon", "query": "Amazon+Andy+Jassy+AI"},
 ]
 
