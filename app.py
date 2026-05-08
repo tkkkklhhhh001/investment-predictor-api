@@ -520,22 +520,65 @@ def fetch_google_news_rss(query, num=5):
 
 
 def fetch_chinese_news(query, num=5):
-    """Fetch Chinese news from Google News RSS."""
+    """Fetch Chinese news from domestic sources (Sina, Baidu)."""
     items = []
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+
+    # Try Sina Finance search
     try:
-        url = f"https://news.google.com/rss/search?q={query}&hl=zh-CN&gl=CN&ceid=CN:zh-Hans"
-        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
-        resp = requests.get(url, headers=headers, timeout=8)
+        sina_url = f"https://search.sina.com.cn/news?q={query}&c=news&sort=time&range=all&num={num}"
+        resp = requests.get(sina_url, headers=headers, timeout=8)
         if resp.status_code == 200:
-            root = ET.fromstring(resp.content)
-            for item in root.findall(".//item")[:num]:
-                title = item.find("title").text if item.find("title") is not None else ""
-                link = item.find("link").text if item.find("link") is not None else ""
-                pub_date = item.find("pubDate").text if item.find("pubDate") is not None else ""
-                source = item.find("source").text if item.find("source") is not None else ""
-                items.append({"title": title, "link": link, "pubDate": pub_date, "source": source})
+            text = resp.text
+            # Parse Sina search results
+            import re as _re
+            results = _re.findall(r'<h2><a href="(.*?)".*?>(.*?)</a></h2>', text)
+            dates = _re.findall(r'<span class="fgray_time">(.*?)</span>', text)
+            for i, (link, title) in enumerate(results[:num]):
+                title = _re.sub(r'<.*?>', '', title).strip()
+                pub_date = dates[i] if i < len(dates) else ""
+                if title:
+                    items.append({"title": title, "link": link, "pubDate": pub_date, "source": "新浪财经"})
     except Exception as e:
-        print(f"Chinese news error for {query}: {e}")
+        print(f"Sina news error for {query}: {e}")
+
+    # Fallback: Baidu news search
+    if len(items) < num:
+        try:
+            from urllib.parse import quote
+            baidu_url = f"https://news.baidu.com/ns?word={quote(query)}&tn=news&from=news&cl=2&rn={num}"
+            resp = requests.get(baidu_url, headers=headers, timeout=8)
+            if resp.status_code == 200:
+                text = resp.text
+                import re as _re
+                results = _re.findall(r'<h3 class="c-title">.*?<a href="(.*?)".*?>(.*?)</a>', text, _re.DOTALL)
+                for link, title in results[:num - len(items)]:
+                    title = _re.sub(r'<.*?>', '', title).strip()
+                    if title and not any(it["title"] == title for it in items):
+                        items.append({"title": title, "link": link, "pubDate": "", "source": "百度新闻"})
+        except Exception as e:
+            print(f"Baidu news error for {query}: {e}")
+
+    # Final fallback: 36Kr search
+    if len(items) < 2:
+        try:
+            from urllib.parse import quote
+            kr_url = f"https://36kr.com/api/search/entity-search?keyword={quote(query)}&page=1&per_page={num}"
+            resp = requests.get(kr_url, headers=headers, timeout=8)
+            if resp.status_code == 200:
+                data = resp.json()
+                entity_list = data.get("data", {}).get("entityList", [])
+                for entity in entity_list[:num - len(items)]:
+                    entity_data = entity.get("templateMaterial", {})
+                    title = entity_data.get("widgetTitle", "")
+                    entity_id = entity_data.get("itemId", "")
+                    link = f"https://36kr.com/p/{entity_id}" if entity_id else ""
+                    pub_date = entity_data.get("publishTime", "")
+                    if title and not any(it["title"] == title for it in items):
+                        items.append({"title": title, "link": link, "pubDate": pub_date, "source": "36氪"})
+        except Exception as e:
+            print(f"36Kr news error for {query}: {e}")
+
     return items
 
 
