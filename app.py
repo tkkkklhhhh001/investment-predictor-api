@@ -27,7 +27,7 @@ ASSETS = {
     ],
     "gold_usd": [
         {"symbol": "GC=F", "name": "Gold (CNY/g)", "display": "GOLD"},
-        {"symbol": "DX-Y.NYB", "name": "USD/CNY Rate", "display": "USD/CNY"},
+        {"symbol": "CNY=X", "name": "USD/CNY Rate", "display": "USD/CNY"},
     ],
     "housing": [
         {"symbol": "0012.HK", "name": "Henderson Land Dev", "display": "HKLAND"},
@@ -39,7 +39,7 @@ ASSETS = {
 FALLBACK_PRICES = {
     "NVDA": 890.0, "MSFT": 420.0, "GOOGL": 175.0, "META": 510.0, "AMZN": 185.0,
     "AMD": 165.0, "INTC": 44.0, "QCOM": 170.0, "AVGO": 1350.0,
-    "GC=F": 2350.0, "DX-Y.NYB": 7.25, "0012.HK": 23.0, "0016.HK": 80.0, "0001.HK": 38.0,
+    "GC=F": 2350.0, "CNY=X": 7.25, "0012.HK": 23.0, "0016.HK": 80.0, "0001.HK": 38.0,
 }
 
 CNY_RATE_FALLBACK = 7.25
@@ -178,7 +178,7 @@ def predict(current_price, symbol):
     volatility = 0.05
     if symbol in ["NVDA", "AMD"]:
         volatility = 0.08
-    elif symbol in ["GC=F", "DX-Y.NYB", "0012.HK", "0016.HK", "0001.HK"]:
+    elif symbol in ["GC=F", "CNY=X", "0012.HK", "0016.HK", "0001.HK"]:
         volatility = 0.03
 
     trend_7d = np.random.normal(0.005, volatility * 0.5)
@@ -242,9 +242,6 @@ def get_predictions_for_category(category):
             if symbol == "GC=F":
                 current_price = round(current_price * cny_rate / 31.1035, 2)
                 history_prices = [round(p * cny_rate / 31.1035, 2) for p in history_prices]
-            elif symbol == "DX-Y.NYB":
-                current_price = cny_rate
-                history_prices = history_prices if history_prices else [cny_rate]
 
         prediction = predict(current_price, symbol + category)
         predicted_prices = generate_predicted_prices(current_price, symbol)
