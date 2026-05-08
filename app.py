@@ -471,25 +471,28 @@ def news_importance_score(item):
 
 
 def fetch_google_news_rss(query, num=5):
-    """Fetch news from multiple RSS sources with fallback."""
+    """Fetch news using Yahoo Finance search API (same domain as price API)."""
     items = []
 
-    # Try Yahoo Finance RSS first (more reliable from cloud)
+    # Use Yahoo Finance search API - same domain as price fetching, confirmed working
     try:
         symbol = query.split("+")[0]
-        url = f"https://feeds.finance.yahoo.com/rss/2.0/headline?s={symbol}&region=US&lang=en-US"
+        url = f"https://query2.finance.yahoo.com/v1/finance/search"
         headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
-        resp = requests.get(url, headers=headers, timeout=8)
+        params = {"q": symbol, "newsCount": num, "quotesCount": 0}
+        resp = requests.get(url, headers=headers, params=params, timeout=8)
         if resp.status_code == 200:
-            root = ET.fromstring(resp.content)
-            for item in root.findall(".//item")[:num]:
-                title = item.find("title").text if item.find("title") is not None else ""
-                link = item.find("link").text if item.find("link") is not None else ""
-                pub_date = item.find("pubDate").text if item.find("pubDate") is not None else ""
-                source = "Yahoo Finance"
+            data = resp.json()
+            news_list = data.get("news", [])
+            for n in news_list[:num]:
+                title = n.get("title", "")
+                link = n.get("link", "")
+                pub_ts = n.get("providerPublishTime", 0)
+                pub_date = datetime.fromtimestamp(pub_ts).strftime("%a, %d %b %Y %H:%M") if pub_ts else ""
+                source = n.get("publisher", "")
                 items.append({"title": title, "link": link, "pubDate": pub_date, "source": source})
     except Exception as e:
-        print(f"Yahoo RSS error for {query}: {e}")
+        print(f"Yahoo search news error for {query}: {e}")
 
     # Fallback to Google News RSS
     if not items:
@@ -533,7 +536,7 @@ def get_ai_news():
         except:
             pass
 
-    if not needs_refresh and "news" in cache:
+    if not needs_refresh and "news" in cache and len(cache["news"]) > 0:
         return cache["news"]
 
     all_news = []
