@@ -520,64 +520,50 @@ def fetch_google_news_rss(query, num=5):
 
 
 def fetch_chinese_news(query, num=5):
-    """Fetch Chinese news from domestic sources (Sina, Baidu)."""
+    """Fetch Chinese news using Bing News (works from overseas servers, links to Chinese sites)."""
     items = []
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+    from urllib.parse import quote
 
-    # Try Sina Finance search
+    # Bing News search (accessible worldwide, returns Chinese news with direct links)
     try:
-        sina_url = f"https://search.sina.com.cn/news?q={query}&c=news&sort=time&range=all&num={num}"
-        resp = requests.get(sina_url, headers=headers, timeout=8)
+        bing_url = f"https://www.bing.com/news/search?q={quote(query)}&setmkt=zh-CN&setlang=zh-hans&format=rss"
+        resp = requests.get(bing_url, headers=headers, timeout=10)
         if resp.status_code == 200:
-            text = resp.text
-            # Parse Sina search results
-            import re as _re
-            results = _re.findall(r'<h2><a href="(.*?)".*?>(.*?)</a></h2>', text)
-            dates = _re.findall(r'<span class="fgray_time">(.*?)</span>', text)
-            for i, (link, title) in enumerate(results[:num]):
-                title = _re.sub(r'<.*?>', '', title).strip()
-                pub_date = dates[i] if i < len(dates) else ""
+            root = ET.fromstring(resp.content)
+            for item in root.findall(".//item")[:num]:
+                title = item.find("title").text if item.find("title") is not None else ""
+                link = item.find("link").text if item.find("link") is not None else ""
+                pub_date = item.find("pubDate").text if item.find("pubDate") is not None else ""
+                source_el = item.find("{http://www.bing.com/news}source")
+                source = source_el.text if source_el is not None else "Bing News"
                 if title:
-                    items.append({"title": title, "link": link, "pubDate": pub_date, "source": "新浪财经"})
+                    items.append({"title": title, "link": link, "pubDate": pub_date, "source": source})
     except Exception as e:
-        print(f"Sina news error for {query}: {e}")
+        print(f"Bing Chinese news error for {query}: {e}")
 
-    # Fallback: Baidu news search
-    if len(items) < num:
-        try:
-            from urllib.parse import quote
-            baidu_url = f"https://news.baidu.com/ns?word={quote(query)}&tn=news&from=news&cl=2&rn={num}"
-            resp = requests.get(baidu_url, headers=headers, timeout=8)
-            if resp.status_code == 200:
-                text = resp.text
-                import re as _re
-                results = _re.findall(r'<h3 class="c-title">.*?<a href="(.*?)".*?>(.*?)</a>', text, _re.DOTALL)
-                for link, title in results[:num - len(items)]:
-                    title = _re.sub(r'<.*?>', '', title).strip()
-                    if title and not any(it["title"] == title for it in items):
-                        items.append({"title": title, "link": link, "pubDate": "", "source": "百度新闻"})
-        except Exception as e:
-            print(f"Baidu news error for {query}: {e}")
-
-    # Final fallback: 36Kr search
+    # Fallback: Yahoo Finance search with Chinese query
     if len(items) < 2:
         try:
-            from urllib.parse import quote
-            kr_url = f"https://36kr.com/api/search/entity-search?keyword={quote(query)}&page=1&per_page={num}"
-            resp = requests.get(kr_url, headers=headers, timeout=8)
+            yahoo_url = f"https://query2.finance.yahoo.com/v1/finance/search?q={quote(query)}&newsCount={num}&lang=zh-Hant"
+            resp = requests.get(yahoo_url, headers=headers, timeout=8)
             if resp.status_code == 200:
                 data = resp.json()
-                entity_list = data.get("data", {}).get("entityList", [])
-                for entity in entity_list[:num - len(items)]:
-                    entity_data = entity.get("templateMaterial", {})
-                    title = entity_data.get("widgetTitle", "")
-                    entity_id = entity_data.get("itemId", "")
-                    link = f"https://36kr.com/p/{entity_id}" if entity_id else ""
-                    pub_date = entity_data.get("publishTime", "")
+                for news in data.get("news", [])[:num - len(items)]:
+                    title = news.get("title", "")
+                    link = news.get("link", "")
+                    pub_date = ""
+                    pub_ts = news.get("providerPublishTime", 0)
+                    if pub_ts:
+                        try:
+                            pub_date = datetime.fromtimestamp(int(pub_ts)).strftime("%Y-%m-%d %H:%M")
+                        except:
+                            pass
+                    publisher = news.get("publisher", "Yahoo Finance")
                     if title and not any(it["title"] == title for it in items):
-                        items.append({"title": title, "link": link, "pubDate": pub_date, "source": "36氪"})
+                        items.append({"title": title, "link": link, "pubDate": pub_date, "source": publisher})
         except Exception as e:
-            print(f"36Kr news error for {query}: {e}")
+            print(f"Yahoo Chinese news error for {query}: {e}")
 
     return items
 
