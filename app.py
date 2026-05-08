@@ -101,7 +101,7 @@ def fetch_price(symbol):
     return None
 
 
-def generate_predicted_prices(current_price, symbol, days=7):
+def generate_predicted_prices(current_price, symbol, days=30):
     np.random.seed(hash(symbol + "pred" + datetime.now().strftime("%Y-%m-%d")) % 2**31)
     volatility = 0.02
     if symbol in ["NVDA", "AMD"]:
