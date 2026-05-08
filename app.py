@@ -519,8 +519,21 @@ def fetch_google_news_rss(query, num=5):
     return items
 
 
+def resolve_google_news_link(google_link):
+    """Resolve Google News redirect to get the actual article URL."""
+    try:
+        resp = requests.head(google_link, allow_redirects=True, timeout=5,
+                           headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"})
+        final_url = resp.url
+        if "google.com" not in final_url:
+            return final_url
+    except:
+        pass
+    return google_link
+
+
 def fetch_chinese_news(query, num=5):
-    """Fetch Chinese news via Google News RSS (works from Render), replace links with Bing (accessible in China)."""
+    """Fetch Chinese news via Google News RSS, resolve redirects to get direct article links."""
     items = []
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
     from urllib.parse import quote
@@ -533,10 +546,11 @@ def fetch_chinese_news(query, num=5):
             root = ET.fromstring(resp.content)
             for item in root.findall(".//item")[:num]:
                 title = item.find("title").text if item.find("title") is not None else ""
+                raw_link = item.find("link").text if item.find("link") is not None else ""
                 pub_date = item.find("pubDate").text if item.find("pubDate") is not None else ""
                 source = item.find("source").text if item.find("source") is not None else ""
-                # Replace Google link with Bing search (cn.bing.com accessible in China)
-                link = f"https://cn.bing.com/news/search?q={quote(title)}" if title else ""
+                # Resolve Google redirect to get actual article URL
+                link = resolve_google_news_link(raw_link) if raw_link else ""
                 if title:
                     items.append({"title": title, "link": link, "pubDate": pub_date, "source": source})
     except Exception as e:
