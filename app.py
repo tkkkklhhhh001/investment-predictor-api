@@ -1,13 +1,14 @@
 from flask import Flask, jsonify
 import requests
 import numpy as np
-from datetime import datetime
+from datetime import datetime, timedelta
 import os
+import json
 
 app = Flask(__name__)
 
-FINNHUB_KEY = os.environ.get("FINNHUB_KEY", "")
-ALPHA_VANTAGE_KEY = os.environ.get("ALPHA_VANTAGE_KEY", "")
+DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "prediction_history")
+os.makedirs(DATA_DIR, exist_ok=True)
 
 ASSETS = {
     "ai_stocks": [
@@ -45,12 +46,9 @@ CNY_RATE_FALLBACK = 7.25
 
 
 def fetch_yahoo_v8(symbol):
-    """Try Yahoo Finance v8 API directly."""
     try:
         url = f"https://query2.finance.yahoo.com/v8/finance/chart/{symbol}"
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-        }
+        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
         params = {"interval": "1d", "range": "1d"}
         resp = requests.get(url, headers=headers, params=params, timeout=10)
         data = resp.json()
@@ -66,27 +64,30 @@ def fetch_yahoo_v8(symbol):
 
 
 def fetch_yahoo_history(symbol, days=30):
-    """Fetch historical closing prices from Yahoo v8."""
     try:
         url = f"https://query2.finance.yahoo.com/v8/finance/chart/{symbol}"
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-        }
+        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
         params = {"interval": "1d", "range": f"{days}d"}
         resp = requests.get(url, headers=headers, params=params, timeout=15)
         data = resp.json()
         result = data.get("chart", {}).get("result", [])
         if result:
+            timestamps = result[0].get("timestamp", [])
             closes = result[0].get("indicators", {}).get("quote", [{}])[0].get("close", [])
-            prices = [round(p, 2) for p in closes if p is not None]
-            return prices
+            prices = []
+            dates = []
+            for i, p in enumerate(closes):
+                if p is not None:
+                    prices.append(round(p, 2))
+                    if i < len(timestamps):
+                        dates.append(datetime.fromtimestamp(timestamps[i]).strftime("%Y-%m-%d"))
+            return prices, dates
     except Exception as e:
         print(f"Yahoo history error {symbol}: {e}")
-    return []
+    return [], []
 
 
 def get_cny_rate():
-    """Get USD/CNY exchange rate."""
     result = fetch_yahoo_v8("CNY=X")
     if result and result.get("price", 0) > 0:
         return result["price"]
@@ -94,15 +95,84 @@ def get_cny_rate():
 
 
 def fetch_price(symbol):
-    """Fetch current price from Yahoo."""
     result = fetch_yahoo_v8(symbol)
     if result:
         return result
     return None
 
 
+def generate_predicted_prices(current_price, symbol, days=7):
+    np.random.seed(hash(symbol + "pred" + datetime.now().strftime("%Y-%m-%d")) % 2**31)
+    volatility = 0.02
+    if symbol in ["NVDA", "AMD"]:
+        volatility = 0.035
+    prices = [current_price]
+    for i in range(days - 1):
+        change = np.random.normal(0.001, volatility)
+        prices.append(round(prices[-1] * (1 + change), 2))
+    return prices
+
+
+def save_daily_prediction(symbol, date_str, predicted_prices):
+    """Save today's prediction to disk so we can compare later."""
+    filepath = os.path.join(DATA_DIR, f"{symbol.replace('=', '_').replace('.', '_')}.json")
+    history = {}
+    if os.path.exists(filepath):
+        try:
+            with open(filepath, "r") as f:
+                history = json.load(f)
+        except:
+            history = {}
+    if date_str not in history:
+        history[date_str] = predicted_prices
+        with open(filepath, "w") as f:
+            json.dump(history, f)
+
+
+def load_prediction_history(symbol):
+    """Load all saved predictions for a symbol."""
+    filepath = os.path.join(DATA_DIR, f"{symbol.replace('=', '_').replace('.', '_')}.json")
+    if os.path.exists(filepath):
+        try:
+            with open(filepath, "r") as f:
+                return json.load(f)
+        except:
+            pass
+    return {}
+
+
+def build_comparison(symbol, history_prices, history_dates, predicted_prices):
+    """
+    Build comparison data:
+    - actualPrices: real historical prices (last 30d)
+    - predictedHistoryPrices: what we predicted for those dates (from saved predictions)
+    - futurePredictedPrices: today's prediction for next 7 days
+    """
+    pred_history = load_prediction_history(symbol)
+
+    predicted_for_past = []
+    for i, date_str in enumerate(history_dates):
+        found = False
+        for pred_date, pred_prices in pred_history.items():
+            pred_dt = datetime.strptime(pred_date, "%Y-%m-%d")
+            target_dt = datetime.strptime(date_str, "%Y-%m-%d")
+            day_diff = (target_dt - pred_dt).days
+            if 0 <= day_diff < len(pred_prices):
+                predicted_for_past.append(pred_prices[day_diff])
+                found = True
+                break
+        if not found:
+            predicted_for_past.append(None)
+
+    return {
+        "actualPrices": history_prices,
+        "actualDates": history_dates,
+        "predictedHistoryPrices": predicted_for_past,
+        "futurePredictedPrices": predicted_prices,
+    }
+
+
 def predict(current_price, symbol):
-    """Generate prediction using trend extrapolation with noise."""
     np.random.seed(hash(symbol + datetime.now().strftime("%Y-%m-%d")) % 2**31)
 
     volatility = 0.05
@@ -144,22 +214,10 @@ def predict(current_price, symbol):
     }
 
 
-def generate_predicted_prices(current_price, symbol, days=7):
-    """Generate a list of predicted daily prices."""
-    np.random.seed(hash(symbol + "pred" + datetime.now().strftime("%Y-%m-%d")) % 2**31)
-    volatility = 0.02
-    if symbol in ["NVDA", "AMD"]:
-        volatility = 0.035
-    prices = [current_price]
-    for i in range(days - 1):
-        change = np.random.normal(0.001, volatility)
-        prices.append(round(prices[-1] * (1 + change), 2))
-    return prices
-
-
 def get_predictions_for_category(category):
     assets = ASSETS.get(category, [])
     results = []
+    today_str = datetime.now().strftime("%Y-%m-%d")
 
     cny_rate = None
     if category == "gold_usd":
@@ -171,7 +229,7 @@ def get_predictions_for_category(category):
         display_symbol = asset.get("display", symbol)
 
         price_data = fetch_price(symbol)
-        history = fetch_yahoo_history(symbol, 30)
+        history_prices, history_dates = fetch_yahoo_history(symbol, 30)
 
         if price_data and price_data.get("price", 0) > 0:
             current_price = price_data["price"]
@@ -183,13 +241,17 @@ def get_predictions_for_category(category):
         if category == "gold_usd" and cny_rate:
             if symbol == "GC=F":
                 current_price = round(current_price * cny_rate / 31.1035, 2)
-                history = [round(p * cny_rate / 31.1035, 2) for p in history]
+                history_prices = [round(p * cny_rate / 31.1035, 2) for p in history_prices]
             elif symbol == "DX-Y.NYB":
                 current_price = cny_rate
-                history = history if history else [cny_rate]
+                history_prices = history_prices if history_prices else [cny_rate]
 
         prediction = predict(current_price, symbol + category)
         predicted_prices = generate_predicted_prices(current_price, symbol)
+
+        save_daily_prediction(symbol, today_str, predicted_prices)
+
+        comparison = build_comparison(symbol, history_prices, history_dates, predicted_prices)
 
         results.append({
             "symbol": display_symbol,
@@ -197,8 +259,9 @@ def get_predictions_for_category(category):
             "category": category,
             "currentPrice": round(current_price, 2),
             "source": source,
-            "historyPrices": history,
+            "historyPrices": history_prices,
             "predictedPrices": predicted_prices,
+            "comparison": comparison,
             **prediction,
         })
 
@@ -224,22 +287,17 @@ def all_predictions():
 
 @app.route("/api/test")
 def test_apis():
-    """Test which APIs work from this server."""
     results = {}
-    test_symbol = "AAPL"
-
-    r = fetch_yahoo_v8(test_symbol)
+    r = fetch_yahoo_v8("AAPL")
     results["yahoo"] = {"result": r}
-
     cny = get_cny_rate()
     results["cny_rate"] = cny
-
     return jsonify(results)
 
 
 @app.route("/")
 def health():
-    return jsonify({"status": "ok", "message": "Investment Predictor API v6"})
+    return jsonify({"status": "ok", "message": "Investment Predictor API v7"})
 
 
 if __name__ == "__main__":
