@@ -524,7 +524,7 @@ def resolve_google_news_link(google_link):
     return google_link
 
 
-def fetch_chinese_news(query, num=5):
+def fetch_chinese_news(query, num=3):
     """Fetch Chinese news directly from Chinese sources (36Kr, Sina, cls.cn)."""
     items = []
     headers = {
@@ -533,92 +533,41 @@ def fetch_chinese_news(query, num=5):
     }
     from urllib.parse import quote
 
-    # Source 1: 36Kr search API (tech/AI news, globally accessible)
+    # Source 1: Sina Finance search API (fast, reliable from overseas)
     try:
-        kr_url = f"https://gateway.36kr.com/api/mis/nav/search/suggest?keyword={quote(query)}&size={num}"
-        kr_headers = {**headers, "Content-Type": "application/json"}
-        resp = requests.get(kr_url, headers=kr_headers, timeout=8)
+        sina_url = f"https://interface.sina.cn/news/search/article_list.d.json?q={quote(query)}&sort=time&page=1&num={num}"
+        resp = requests.get(sina_url, headers=headers, timeout=5)
         if resp.status_code == 200:
             data = resp.json()
-            item_list = data.get("data", {}).get("itemList", [])
-            for it in item_list[:num]:
-                title = it.get("title", "") or it.get("templateMaterial", {}).get("widgetTitle", "")
-                item_id = it.get("itemId", "") or it.get("id", "")
-                title = re.sub(r'<[^>]+>', '', title).strip()
-                link = f"https://36kr.com/p/{item_id}" if item_id else ""
-                pub_date = it.get("publishTime", "") or it.get("templateMaterial", {}).get("publishTime", "")
+            articles = data.get("result", {}).get("list", [])
+            for art in articles[:num]:
+                title = re.sub(r'<[^>]+>', '', art.get("title", "")).strip()
+                link = art.get("url", "")
+                pub_date = art.get("ctime", "")
+                source = art.get("media", "新浪")
                 if title and link:
-                    items.append({"title": title, "link": link, "pubDate": pub_date, "source": "36氪"})
+                    items.append({"title": title, "link": link, "pubDate": pub_date, "source": source})
     except Exception as e:
-        print(f"36Kr news error for {query}: {e}")
+        print(f"Sina news error for {query}: {e}")
 
-    # Source 2: Sina Finance search (financial news, globally accessible)
-    if len(items) < num:
+    # Source 2: 36Kr (only if Sina returned nothing)
+    if not items:
         try:
-            sina_url = f"https://interface.sina.cn/news/search/article_list.d.json?q={quote(query)}&sort=time&page=1&num={num}"
-            resp = requests.get(sina_url, headers=headers, timeout=8)
+            kr_url = f"https://gateway.36kr.com/api/mis/nav/search/suggest?keyword={quote(query)}&size={num}"
+            resp = requests.get(kr_url, headers=headers, timeout=5)
             if resp.status_code == 200:
                 data = resp.json()
-                articles = data.get("result", {}).get("list", [])
-                for art in articles[:num - len(items)]:
-                    title = re.sub(r'<[^>]+>', '', art.get("title", "")).strip()
-                    link = art.get("url", "")
-                    pub_date = art.get("ctime", "")
-                    source = art.get("media", "新浪")
-                    if title and link and not any(it["title"] == title for it in items):
-                        items.append({"title": title, "link": link, "pubDate": pub_date, "source": source})
-        except Exception as e:
-            print(f"Sina news error for {query}: {e}")
-
-    # Source 3: CLS 财联社 (financial news, globally accessible)
-    if len(items) < num:
-        try:
-            cls_url = f"https://www.cls.cn/api/search?keyword={quote(query)}&page=1&size={num}&type=article"
-            resp = requests.get(cls_url, headers=headers, timeout=8)
-            if resp.status_code == 200:
-                data = resp.json()
-                articles = data.get("data", {}).get("list", [])
-                for art in articles[:num - len(items)]:
-                    title = art.get("title", "") or art.get("brief", "")
+                item_list = data.get("data", {}).get("itemList", [])
+                for it in item_list[:num]:
+                    title = it.get("title", "") or it.get("templateMaterial", {}).get("widgetTitle", "")
+                    item_id = it.get("itemId", "") or it.get("id", "")
                     title = re.sub(r'<[^>]+>', '', title).strip()
-                    art_id = art.get("id", "")
-                    link = f"https://www.cls.cn/detail/{art_id}" if art_id else ""
-                    pub_date = ""
-                    ctime = art.get("ctime", 0)
-                    if ctime:
-                        try:
-                            pub_date = datetime.fromtimestamp(int(ctime)).strftime("%Y-%m-%d %H:%M")
-                        except:
-                            pass
-                    if title and link and not any(it["title"] == title for it in items):
-                        items.append({"title": title, "link": link, "pubDate": pub_date, "source": "财联社"})
+                    link = f"https://36kr.com/p/{item_id}" if item_id else ""
+                    pub_date = it.get("publishTime", "")
+                    if title and link:
+                        items.append({"title": title, "link": link, "pubDate": pub_date, "source": "36氪"})
         except Exception as e:
-            print(f"CLS news error for {query}: {e}")
-
-    return items
-
-    # Fallback: Yahoo Finance search
-    if len(items) < 2:
-        try:
-            yahoo_url = f"https://query2.finance.yahoo.com/v1/finance/search?q={quote(query)}&newsCount={num}"
-            resp = requests.get(yahoo_url, headers=headers, timeout=8)
-            if resp.status_code == 200:
-                data = resp.json()
-                for news in data.get("news", [])[:num - len(items)]:
-                    title = news.get("title", "")
-                    pub_date = ""
-                    pub_ts = news.get("providerPublishTime", 0)
-                    if pub_ts:
-                        try:
-                            pub_date = datetime.fromtimestamp(int(pub_ts)).strftime("%Y-%m-%d %H:%M")
-                        except:
-                            pass
-                    publisher = news.get("publisher", "Yahoo")
-                    link = f"https://cn.bing.com/news/search?q={quote(title)}" if title else ""
-                    if title and not any(it["title"] == title for it in items):
-                        items.append({"title": title, "link": link, "pubDate": pub_date, "source": publisher})
-        except Exception as e:
-            print(f"Yahoo Chinese news error for {query}: {e}")
+            print(f"36Kr news error for {query}: {e}")
 
     return items
 
@@ -666,7 +615,8 @@ def get_ai_news(lang="en"):
 
     companies = AI_NEWS_COMPANIES if lang == "en" else AI_NEWS_COMPANIES_ZH
     all_news = []
-    for company in companies:
+
+    def fetch_company_news(company):
         try:
             if lang == "zh":
                 items = fetch_chinese_news(company["query"], num=3)
@@ -674,9 +624,15 @@ def get_ai_news(lang="en"):
                 items = fetch_google_news_rss(company["query"], num=3)
             for item in items:
                 item["company"] = company["name"]
-            all_news.extend(items)
+            return items
         except Exception as e:
             print(f"Error fetching news for {company['name']}: {e}")
+            return []
+
+    with ThreadPoolExecutor(max_workers=5) as executor:
+        futures = {executor.submit(fetch_company_news, c): c for c in companies}
+        for future in as_completed(futures):
+            all_news.extend(future.result())
 
     try:
         all_news.sort(key=lambda x: news_importance_score(x), reverse=True)
