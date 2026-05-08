@@ -4,6 +4,9 @@ import numpy as np
 from datetime import datetime, timedelta
 import os
 import json
+import xml.etree.ElementTree as ET
+import re
+import hashlib
 
 app = Flask(__name__)
 
@@ -24,22 +27,30 @@ ASSETS = {
         {"symbol": "INTC", "name": "Intel"},
         {"symbol": "QCOM", "name": "Qualcomm"},
         {"symbol": "AVGO", "name": "Broadcom"},
+        {"symbol": "TSM", "name": "TSMC"},
+        {"symbol": "005930.KS", "name": "Samsung", "display": "SAMSUNG"},
+        {"symbol": "MU", "name": "Micron"},
+        {"symbol": "000660.KS", "name": "SK Hynix", "display": "SKHYNIX"},
     ],
     "gold_usd": [
         {"symbol": "GC=F", "name": "Gold (CNY/g)", "display": "GOLD"},
         {"symbol": "CNY=X", "name": "USD/CNY Rate", "display": "USD/CNY"},
     ],
-    "housing": [
-        {"symbol": "0012.HK", "name": "Henderson Land Dev", "display": "HKLAND"},
-        {"symbol": "0016.HK", "name": "SHK Properties", "display": "SHKP"},
-        {"symbol": "0001.HK", "name": "CK Asset Holdings", "display": "CKA"},
-    ],
 }
+
+AI_NEWS_COMPANIES = [
+    {"name": "NVIDIA", "query": "NVIDIA+Jensen+Huang"},
+    {"name": "Microsoft", "query": "Microsoft+Satya+Nadella+AI"},
+    {"name": "Google", "query": "Google+DeepMind+Sundar+Pichai+AI"},
+    {"name": "Meta", "query": "Meta+Mark+Zuckerberg+AI"},
+    {"name": "OpenAI", "query": "OpenAI+Sam+Altman"},
+    {"name": "Amazon", "query": "Amazon+Andy+Jassy+AI"},
+]
 
 FALLBACK_PRICES = {
     "NVDA": 890.0, "MSFT": 420.0, "GOOGL": 175.0, "META": 510.0, "AMZN": 185.0,
     "AMD": 165.0, "INTC": 44.0, "QCOM": 170.0, "AVGO": 1350.0,
-    "GC=F": 2350.0, "CNY=X": 7.25, "0012.HK": 23.0, "0016.HK": 80.0, "0001.HK": 38.0,
+    "GC=F": 2350.0, "CNY=X": 7.25,
 }
 
 CNY_RATE_FALLBACK = 7.25
@@ -267,7 +278,7 @@ def get_predictions_for_category(category):
 
 @app.route("/api/predictions/<category>")
 def predictions(category):
-    valid = ["ai_stocks", "semi_stocks", "gold_usd", "housing"]
+    valid = ["ai_stocks", "semi_stocks", "gold_usd"]
     if category not in valid:
         return jsonify({"error": "Invalid category"}), 400
     data = get_predictions_for_category(category)
@@ -277,9 +288,93 @@ def predictions(category):
 @app.route("/api/predictions")
 def all_predictions():
     result = {}
-    for cat in ["ai_stocks", "semi_stocks", "gold_usd", "housing"]:
+    for cat in ["ai_stocks", "semi_stocks", "gold_usd"]:
         result[cat] = get_predictions_for_category(cat)
     return jsonify(result)
+
+
+# --- AI News Feature ---
+
+NEWS_CACHE_FILE = os.path.join(DATA_DIR, "news_cache.json")
+
+
+def fetch_google_news_rss(query, num=5):
+    """Fetch news from Google News RSS."""
+    try:
+        url = f"https://news.google.com/rss/search?q={query}&hl=en-US&gl=US&ceid=US:en"
+        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+        resp = requests.get(url, headers=headers, timeout=10)
+        root = ET.fromstring(resp.content)
+        items = []
+        for item in root.findall(".//item")[:num]:
+            title = item.find("title").text if item.find("title") is not None else ""
+            link = item.find("link").text if item.find("link") is not None else ""
+            pub_date = item.find("pubDate").text if item.find("pubDate") is not None else ""
+            source = item.find("source").text if item.find("source") is not None else ""
+            items.append({
+                "title": title,
+                "link": link,
+                "pubDate": pub_date,
+                "source": source,
+            })
+        return items
+    except Exception as e:
+        print(f"News fetch error for {query}: {e}")
+        return []
+
+
+def get_ai_news():
+    """Get AI company news, with caching (refresh every 4 hours)."""
+    cache = {}
+    if os.path.exists(NEWS_CACHE_FILE):
+        try:
+            with open(NEWS_CACHE_FILE, "r") as f:
+                cache = json.load(f)
+        except:
+            cache = {}
+
+    last_update = cache.get("last_update", "")
+    now = datetime.now()
+    needs_refresh = True
+
+    if last_update:
+        try:
+            last_dt = datetime.strptime(last_update, "%Y-%m-%d %H:%M")
+            if (now - last_dt).total_seconds() < 4 * 3600:
+                needs_refresh = False
+        except:
+            pass
+
+    if not needs_refresh and "news" in cache:
+        return cache["news"]
+
+    all_news = []
+    for company in AI_NEWS_COMPANIES:
+        items = fetch_google_news_rss(company["query"], num=3)
+        for item in items:
+            item["company"] = company["name"]
+        all_news.extend(items)
+
+    all_news.sort(key=lambda x: x.get("pubDate", ""), reverse=True)
+
+    cache = {
+        "last_update": now.strftime("%Y-%m-%d %H:%M"),
+        "news": all_news,
+    }
+    try:
+        with open(NEWS_CACHE_FILE, "w") as f:
+            json.dump(cache, f)
+    except:
+        pass
+
+    return all_news
+
+
+@app.route("/api/news")
+def ai_news():
+    """Get AI company news."""
+    news = get_ai_news()
+    return jsonify(news)
 
 
 @app.route("/api/test")
@@ -294,7 +389,7 @@ def test_apis():
 
 @app.route("/")
 def health():
-    return jsonify({"status": "ok", "message": "Investment Predictor API v7"})
+    return jsonify({"status": "ok", "message": "Investment Predictor API v8"})
 
 
 if __name__ == "__main__":
