@@ -520,41 +520,37 @@ def fetch_google_news_rss(query, num=5):
 
 
 def fetch_chinese_news(query, num=5):
-    """Fetch Chinese news using Bing News HTML scraping (works worldwide, links accessible in China)."""
+    """Fetch Chinese news via Google News RSS (works from Render), replace links with Bing (accessible in China)."""
     items = []
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Accept-Language": "zh-CN,zh;q=0.9"
-    }
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
     from urllib.parse import quote
 
-    # Bing News HTML scraping (Bing accessible in China + from overseas servers)
+    # Google News RSS - proven to work from Render for Chinese content
     try:
-        bing_url = f"https://cn.bing.com/news/search?q={quote(query)}&FORM=HDRSC6"
-        resp = requests.get(bing_url, headers=headers, timeout=10)
+        url = f"https://news.google.com/rss/search?q={quote(query)}&hl=zh-CN&gl=CN&ceid=CN:zh-Hans"
+        resp = requests.get(url, headers=headers, timeout=10)
         if resp.status_code == 200:
-            text = resp.text
-            # Parse news cards from Bing HTML
-            cards = re.findall(r'<a[^>]*class="[^"]*title[^"]*"[^>]*href="([^"]*)"[^>]*>(.*?)</a>', text)
-            if not cards:
-                cards = re.findall(r'<a[^>]+href="(https?://[^"]+)"[^>]*title="([^"]*)"', text)
-            for link, title in cards[:num]:
-                title = re.sub(r'<[^>]+>', '', title).strip()
-                if title and len(title) > 5 and "bing.com" not in link:
-                    items.append({"title": title, "link": link, "pubDate": "", "source": "Bing"})
+            root = ET.fromstring(resp.content)
+            for item in root.findall(".//item")[:num]:
+                title = item.find("title").text if item.find("title") is not None else ""
+                pub_date = item.find("pubDate").text if item.find("pubDate") is not None else ""
+                source = item.find("source").text if item.find("source") is not None else ""
+                # Replace Google link with Bing search (cn.bing.com accessible in China)
+                link = f"https://cn.bing.com/news/search?q={quote(title)}" if title else ""
+                if title:
+                    items.append({"title": title, "link": link, "pubDate": pub_date, "source": source})
     except Exception as e:
-        print(f"Bing Chinese news error for {query}: {e}")
+        print(f"Chinese news RSS error for {query}: {e}")
 
-    # Fallback: Yahoo Finance search (always works from Render)
+    # Fallback: Yahoo Finance search
     if len(items) < 2:
         try:
-            yahoo_url = f"https://query2.finance.yahoo.com/v1/finance/search?q={quote(query)}&newsCount={num}&lang=zh-Hant"
+            yahoo_url = f"https://query2.finance.yahoo.com/v1/finance/search?q={quote(query)}&newsCount={num}"
             resp = requests.get(yahoo_url, headers=headers, timeout=8)
             if resp.status_code == 200:
                 data = resp.json()
                 for news in data.get("news", [])[:num - len(items)]:
                     title = news.get("title", "")
-                    link = news.get("link", "")
                     pub_date = ""
                     pub_ts = news.get("providerPublishTime", 0)
                     if pub_ts:
@@ -563,6 +559,7 @@ def fetch_chinese_news(query, num=5):
                         except:
                             pass
                     publisher = news.get("publisher", "Yahoo")
+                    link = f"https://cn.bing.com/news/search?q={quote(title)}" if title else ""
                     if title and not any(it["title"] == title for it in items):
                         items.append({"title": title, "link": link, "pubDate": pub_date, "source": publisher})
         except Exception as e:
