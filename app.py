@@ -519,12 +519,48 @@ def fetch_google_news_rss(query, num=5):
     return items
 
 
-def get_ai_news():
+def fetch_chinese_news(query, num=5):
+    """Fetch Chinese news from Google News RSS."""
+    items = []
+    try:
+        url = f"https://news.google.com/rss/search?q={query}&hl=zh-CN&gl=CN&ceid=CN:zh-Hans"
+        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+        resp = requests.get(url, headers=headers, timeout=8)
+        if resp.status_code == 200:
+            root = ET.fromstring(resp.content)
+            for item in root.findall(".//item")[:num]:
+                title = item.find("title").text if item.find("title") is not None else ""
+                link = item.find("link").text if item.find("link") is not None else ""
+                pub_date = item.find("pubDate").text if item.find("pubDate") is not None else ""
+                source = item.find("source").text if item.find("source") is not None else ""
+                items.append({"title": title, "link": link, "pubDate": pub_date, "source": source})
+    except Exception as e:
+        print(f"Chinese news error for {query}: {e}")
+    return items
+
+
+AI_NEWS_COMPANIES_ZH = [
+    {"name": "NVIDIA", "query": "英伟达+黄仁勋"},
+    {"name": "Microsoft", "query": "微软+纳德拉+AI"},
+    {"name": "Google", "query": "谷歌+DeepMind+AI"},
+    {"name": "Meta", "query": "Meta+扎克伯格+AI"},
+    {"name": "OpenAI", "query": "OpenAI+奥特曼"},
+    {"name": "Anthropic", "query": "Anthropic+Claude"},
+    {"name": "Amazon", "query": "亚马逊+AI"},
+    {"name": "Intel", "query": "英特尔+芯片+AI"},
+    {"name": "Qualcomm", "query": "高通+骁龙+AI"},
+    {"name": "Samsung", "query": "三星+半导体+AI"},
+    {"name": "Apple", "query": "苹果+AI+人工智能"},
+]
+
+
+def get_ai_news(lang="en"):
     """Get AI company news, with caching (refresh every 4 hours)."""
+    cache_file = NEWS_CACHE_FILE if lang == "en" else NEWS_CACHE_FILE.replace(".json", f"_{lang}.json")
     cache = {}
-    if os.path.exists(NEWS_CACHE_FILE):
+    if os.path.exists(cache_file):
         try:
-            with open(NEWS_CACHE_FILE, "r") as f:
+            with open(cache_file, "r") as f:
                 cache = json.load(f)
         except:
             cache = {}
@@ -544,10 +580,14 @@ def get_ai_news():
     if not needs_refresh and "news" in cache and len(cache["news"]) > 0:
         return cache["news"]
 
+    companies = AI_NEWS_COMPANIES if lang == "en" else AI_NEWS_COMPANIES_ZH
     all_news = []
-    for company in AI_NEWS_COMPANIES:
+    for company in companies:
         try:
-            items = fetch_google_news_rss(company["query"], num=3)
+            if lang == "zh":
+                items = fetch_chinese_news(company["query"], num=3)
+            else:
+                items = fetch_google_news_rss(company["query"], num=3)
             for item in items:
                 item["company"] = company["name"]
             all_news.extend(items)
@@ -564,8 +604,8 @@ def get_ai_news():
         "news": all_news,
     }
     try:
-        with open(NEWS_CACHE_FILE, "w") as f:
-            json.dump(cache, f)
+        with open(cache_file, "w") as f:
+            json.dump(cache, f, ensure_ascii=False)
     except:
         pass
 
@@ -574,19 +614,24 @@ def get_ai_news():
 
 @app.route("/api/news")
 def ai_news():
-    """Get AI company news."""
+    """Get AI company news. Use ?lang=zh for Chinese."""
     try:
+        from flask import request
+        lang = request.args.get("lang", "en")
+
         # Delete stale cache to force fresh fetch
-        if os.path.exists(NEWS_CACHE_FILE):
+        cache_file = NEWS_CACHE_FILE if lang == "en" else NEWS_CACHE_FILE.replace(".json", f"_{lang}.json")
+        if os.path.exists(cache_file):
             try:
-                with open(NEWS_CACHE_FILE, "r") as f:
+                with open(cache_file, "r") as f:
                     cache = json.load(f)
                 if not cache.get("news"):
-                    os.remove(NEWS_CACHE_FILE)
+                    os.remove(cache_file)
             except:
-                os.remove(NEWS_CACHE_FILE)
+                if os.path.exists(cache_file):
+                    os.remove(cache_file)
 
-        news = get_ai_news()
+        news = get_ai_news(lang=lang)
         return jsonify(news)
     except Exception as e:
         print(f"News endpoint error: {e}")
