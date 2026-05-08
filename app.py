@@ -452,18 +452,19 @@ def news_importance_score(item):
             break
 
     pub = item.get("pubDate", "")
-    try:
-        from email.utils import parsedate_to_datetime
-        dt = parsedate_to_datetime(pub)
-        hours_ago = (datetime.now(dt.tzinfo) - dt).total_seconds() / 3600
-        if hours_ago < 6:
-            score += 30
-        elif hours_ago < 24:
-            score += 20
-        elif hours_ago < 48:
-            score += 10
-    except:
-        pass
+    if pub:
+        try:
+            from email.utils import parsedate_to_datetime
+            dt = parsedate_to_datetime(pub)
+            hours_ago = (datetime.now(dt.tzinfo) - dt).total_seconds() / 3600
+            if hours_ago < 6:
+                score += 30
+            elif hours_ago < 24:
+                score += 20
+            elif hours_ago < 48:
+                score += 10
+        except:
+            pass
 
     return score
 
@@ -541,12 +542,18 @@ def get_ai_news():
 
     all_news = []
     for company in AI_NEWS_COMPANIES:
-        items = fetch_google_news_rss(company["query"], num=3)
-        for item in items:
-            item["company"] = company["name"]
-        all_news.extend(items)
+        try:
+            items = fetch_google_news_rss(company["query"], num=3)
+            for item in items:
+                item["company"] = company["name"]
+            all_news.extend(items)
+        except Exception as e:
+            print(f"Error fetching news for {company['name']}: {e}")
 
-    all_news.sort(key=lambda x: news_importance_score(x), reverse=True)
+    try:
+        all_news.sort(key=lambda x: news_importance_score(x), reverse=True)
+    except:
+        pass
 
     cache = {
         "last_update": now.strftime("%Y-%m-%d %H:%M"),
@@ -564,8 +571,12 @@ def get_ai_news():
 @app.route("/api/news")
 def ai_news():
     """Get AI company news."""
-    news = get_ai_news()
-    return jsonify(news)
+    try:
+        news = get_ai_news()
+        return jsonify(news)
+    except Exception as e:
+        print(f"News endpoint error: {e}")
+        return jsonify([])
 
 
 @app.route("/api/test")
