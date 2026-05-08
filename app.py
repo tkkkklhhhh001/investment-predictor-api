@@ -489,7 +489,10 @@ def fetch_google_news_rss(query, num=5):
                 title = n.get("title", "")
                 link = n.get("link", "")
                 pub_ts = n.get("providerPublishTime", 0)
-                pub_date = datetime.fromtimestamp(pub_ts).strftime("%a, %d %b %Y %H:%M") if pub_ts else ""
+                try:
+                    pub_date = datetime.fromtimestamp(int(pub_ts)).strftime("%a, %d %b %Y %H:%M") if pub_ts else ""
+                except:
+                    pub_date = ""
                 source = n.get("publisher", "")
                 items.append({"title": title, "link": link, "pubDate": pub_date, "source": source})
     except Exception as e:
@@ -572,11 +575,23 @@ def get_ai_news():
 def ai_news():
     """Get AI company news."""
     try:
+        # Delete stale cache to force fresh fetch
+        if os.path.exists(NEWS_CACHE_FILE):
+            try:
+                with open(NEWS_CACHE_FILE, "r") as f:
+                    cache = json.load(f)
+                if not cache.get("news"):
+                    os.remove(NEWS_CACHE_FILE)
+            except:
+                os.remove(NEWS_CACHE_FILE)
+
         news = get_ai_news()
         return jsonify(news)
     except Exception as e:
         print(f"News endpoint error: {e}")
-        return jsonify([])
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
 
 
 @app.route("/api/test")
