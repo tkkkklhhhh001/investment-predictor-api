@@ -520,41 +520,82 @@ def fetch_google_news_rss(query, num=5):
 
 
 def resolve_google_news_link(google_link):
-    """Resolve Google News redirect to get the actual article URL."""
-    try:
-        resp = requests.head(google_link, allow_redirects=True, timeout=5,
-                           headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"})
-        final_url = resp.url
-        if "google.com" not in final_url:
-            return final_url
-    except:
-        pass
+    """Not used anymore - kept for reference."""
     return google_link
 
 
 def fetch_chinese_news(query, num=5):
-    """Fetch Chinese news via Google News RSS, resolve redirects to get direct article links."""
+    """Fetch Chinese news directly from Chinese sources (36Kr, Sina, cls.cn)."""
     items = []
-    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept-Language": "zh-CN,zh;q=0.9"
+    }
     from urllib.parse import quote
 
-    # Google News RSS - proven to work from Render for Chinese content
+    # Source 1: 36Kr search API (tech/AI news, globally accessible)
     try:
-        url = f"https://news.google.com/rss/search?q={quote(query)}&hl=zh-CN&gl=CN&ceid=CN:zh-Hans"
-        resp = requests.get(url, headers=headers, timeout=10)
+        kr_url = f"https://gateway.36kr.com/api/mis/nav/search/suggest?keyword={quote(query)}&size={num}"
+        kr_headers = {**headers, "Content-Type": "application/json"}
+        resp = requests.get(kr_url, headers=kr_headers, timeout=8)
         if resp.status_code == 200:
-            root = ET.fromstring(resp.content)
-            for item in root.findall(".//item")[:num]:
-                title = item.find("title").text if item.find("title") is not None else ""
-                raw_link = item.find("link").text if item.find("link") is not None else ""
-                pub_date = item.find("pubDate").text if item.find("pubDate") is not None else ""
-                source = item.find("source").text if item.find("source") is not None else ""
-                # Resolve Google redirect to get actual article URL
-                link = resolve_google_news_link(raw_link) if raw_link else ""
-                if title:
-                    items.append({"title": title, "link": link, "pubDate": pub_date, "source": source})
+            data = resp.json()
+            item_list = data.get("data", {}).get("itemList", [])
+            for it in item_list[:num]:
+                title = it.get("title", "") or it.get("templateMaterial", {}).get("widgetTitle", "")
+                item_id = it.get("itemId", "") or it.get("id", "")
+                title = re.sub(r'<[^>]+>', '', title).strip()
+                link = f"https://36kr.com/p/{item_id}" if item_id else ""
+                pub_date = it.get("publishTime", "") or it.get("templateMaterial", {}).get("publishTime", "")
+                if title and link:
+                    items.append({"title": title, "link": link, "pubDate": pub_date, "source": "36氪"})
     except Exception as e:
-        print(f"Chinese news RSS error for {query}: {e}")
+        print(f"36Kr news error for {query}: {e}")
+
+    # Source 2: Sina Finance search (financial news, globally accessible)
+    if len(items) < num:
+        try:
+            sina_url = f"https://interface.sina.cn/news/search/article_list.d.json?q={quote(query)}&sort=time&page=1&num={num}"
+            resp = requests.get(sina_url, headers=headers, timeout=8)
+            if resp.status_code == 200:
+                data = resp.json()
+                articles = data.get("result", {}).get("list", [])
+                for art in articles[:num - len(items)]:
+                    title = re.sub(r'<[^>]+>', '', art.get("title", "")).strip()
+                    link = art.get("url", "")
+                    pub_date = art.get("ctime", "")
+                    source = art.get("media", "新浪")
+                    if title and link and not any(it["title"] == title for it in items):
+                        items.append({"title": title, "link": link, "pubDate": pub_date, "source": source})
+        except Exception as e:
+            print(f"Sina news error for {query}: {e}")
+
+    # Source 3: CLS 财联社 (financial news, globally accessible)
+    if len(items) < num:
+        try:
+            cls_url = f"https://www.cls.cn/api/search?keyword={quote(query)}&page=1&size={num}&type=article"
+            resp = requests.get(cls_url, headers=headers, timeout=8)
+            if resp.status_code == 200:
+                data = resp.json()
+                articles = data.get("data", {}).get("list", [])
+                for art in articles[:num - len(items)]:
+                    title = art.get("title", "") or art.get("brief", "")
+                    title = re.sub(r'<[^>]+>', '', title).strip()
+                    art_id = art.get("id", "")
+                    link = f"https://www.cls.cn/detail/{art_id}" if art_id else ""
+                    pub_date = ""
+                    ctime = art.get("ctime", 0)
+                    if ctime:
+                        try:
+                            pub_date = datetime.fromtimestamp(int(ctime)).strftime("%Y-%m-%d %H:%M")
+                        except:
+                            pass
+                    if title and link and not any(it["title"] == title for it in items):
+                        items.append({"title": title, "link": link, "pubDate": pub_date, "source": "财联社"})
+        except Exception as e:
+            print(f"CLS news error for {query}: {e}")
+
+    return items
 
     # Fallback: Yahoo Finance search
     if len(items) < 2:
