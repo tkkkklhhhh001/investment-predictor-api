@@ -519,51 +519,190 @@ def fetch_google_news_rss(query, num=5):
     return items
 
 
-def make_bing_search_link(title):
-    """Create a Bing China search link for the article title (accessible in China)."""
-    from urllib.parse import quote
-    clean_title = title.strip()
-    if " - " in clean_title:
-        clean_title = clean_title.rsplit(" - ", 1)[0].strip()
-    return f"https://cn.bing.com/search?q=%22{quote(clean_title)}%22"
+CHINESE_AI_SOURCES = [
+    {
+        "name": "机器之心",
+        "url": "https://www.jiqizhixin.com/",
+        "type": "jiqizhixin",
+    },
+    {
+        "name": "量子位",
+        "url": "https://www.qbitai.com/",
+        "type": "qbitai",
+    },
+    {
+        "name": "雷峰网",
+        "url": "https://www.leiphone.com/category/ai",
+        "type": "leiphone",
+    },
+    {
+        "name": "爱范儿",
+        "url": "https://www.ifanr.com/category/ai",
+        "type": "ifanr",
+    },
+    {
+        "name": "品玩",
+        "url": "https://www.pingwest.com/",
+        "type": "pingwest",
+    },
+    {
+        "name": "极客公园",
+        "url": "https://www.geekpark.net/",
+        "type": "geekpark",
+    },
+]
+
+HEADERS_ZH = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+}
 
 
-def fetch_chinese_news(query, num=3):
-    """Fetch Chinese news via Google News RSS, with Bing search links (accessible in China)."""
+def fetch_jiqizhixin():
+    """Fetch AI articles from 机器之心."""
     items = []
-    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
-
     try:
-        url = f"https://news.google.com/rss/search?q={query}&hl=zh-CN&gl=CN&ceid=CN:zh-Hans"
-        resp = requests.get(url, headers=headers, timeout=8)
+        resp = requests.get("https://www.jiqizhixin.com/", headers=HEADERS_ZH, timeout=10)
         if resp.status_code == 200:
-            root = ET.fromstring(resp.content)
-            for item in root.findall(".//item")[:num]:
-                title = item.find("title").text if item.find("title") is not None else ""
-                pub_date = item.find("pubDate").text if item.find("pubDate") is not None else ""
-                source = item.find("source").text if item.find("source") is not None else ""
-                link = make_bing_search_link(title) if title else ""
-                if title:
-                    items.append({"title": title, "link": link, "pubDate": pub_date, "source": source})
+            import re
+            articles = re.findall(r'<a[^>]+href="(/articles/[^"]+)"[^>]*>.*?<span[^>]*>([^<]+)</span>', resp.text, re.DOTALL)
+            if not articles:
+                articles = re.findall(r'href="(/articles/[^"]+)"[^>]*title="([^"]+)"', resp.text)
+            for path, title in articles[:8]:
+                title = title.strip()
+                if title and len(title) > 4:
+                    link = f"https://www.jiqizhixin.com{path}" if path.startswith("/") else path
+                    items.append({"title": title, "link": link, "source": "机器之心", "pubDate": "", "company": "AI"})
     except Exception as e:
-        print(f"Chinese news error for {query}: {e}")
-
+        print(f"jiqizhixin error: {e}")
     return items
 
 
-AI_NEWS_COMPANIES_ZH = [
-    {"name": "NVIDIA", "query": "英伟达+黄仁勋"},
-    {"name": "Microsoft", "query": "微软+纳德拉+AI"},
-    {"name": "Google", "query": "谷歌+DeepMind+AI"},
-    {"name": "Meta", "query": "Meta+扎克伯格+AI"},
-    {"name": "OpenAI", "query": "OpenAI+奥特曼"},
-    {"name": "Anthropic", "query": "Anthropic+Claude"},
-    {"name": "Amazon", "query": "亚马逊+AI"},
-    {"name": "Intel", "query": "英特尔+芯片+AI"},
-    {"name": "Qualcomm", "query": "高通+骁龙+AI"},
-    {"name": "Samsung", "query": "三星+半导体+AI"},
-    {"name": "Apple", "query": "苹果+AI+人工智能"},
-]
+def fetch_qbitai():
+    """Fetch AI articles from 量子位."""
+    items = []
+    try:
+        resp = requests.get("https://www.qbitai.com/", headers=HEADERS_ZH, timeout=10)
+        if resp.status_code == 200:
+            import re
+            articles = re.findall(r'<a[^>]+href="(https?://www\.qbitai\.com/\d+/\d+/[^"]+)"[^>]*>([^<]+)</a>', resp.text)
+            if not articles:
+                articles = re.findall(r'href="(https?://www\.qbitai\.com/[^"]*\d+\.html)"[^>]*>([^<]+)</a>', resp.text)
+            for link, title in articles[:8]:
+                title = title.strip()
+                if title and len(title) > 4:
+                    items.append({"title": title, "link": link, "source": "量子位", "pubDate": "", "company": "AI"})
+    except Exception as e:
+        print(f"qbitai error: {e}")
+    return items
+
+
+def fetch_leiphone():
+    """Fetch AI articles from 雷峰网."""
+    items = []
+    try:
+        resp = requests.get("https://www.leiphone.com/category/ai", headers=HEADERS_ZH, timeout=10)
+        if resp.status_code == 200:
+            import re
+            articles = re.findall(r'<a[^>]+href="(https?://www\.leiphone\.com/[^"]+)"[^>]*title="([^"]+)"', resp.text)
+            if not articles:
+                articles = re.findall(r'href="(https?://www\.leiphone\.com/category/ai/[^"]+)"[^>]*>([^<]{5,})</a>', resp.text)
+            for link, title in articles[:8]:
+                title = title.strip()
+                if title and len(title) > 4:
+                    items.append({"title": title, "link": link, "source": "雷峰网", "pubDate": "", "company": "AI"})
+    except Exception as e:
+        print(f"leiphone error: {e}")
+    return items
+
+
+def fetch_ifanr():
+    """Fetch AI articles from 爱范儿."""
+    items = []
+    try:
+        resp = requests.get("https://www.ifanr.com/category/ai", headers=HEADERS_ZH, timeout=10)
+        if resp.status_code == 200:
+            import re
+            articles = re.findall(r'<a[^>]+href="(https?://www\.ifanr\.com/\d+)"[^>]*>([^<]{5,})</a>', resp.text)
+            for link, title in articles[:8]:
+                title = title.strip()
+                if title and len(title) > 4:
+                    items.append({"title": title, "link": link, "source": "爱范儿", "pubDate": "", "company": "AI"})
+    except Exception as e:
+        print(f"ifanr error: {e}")
+    return items
+
+
+def fetch_pingwest():
+    """Fetch AI articles from 品玩."""
+    items = []
+    try:
+        resp = requests.get("https://www.pingwest.com/", headers=HEADERS_ZH, timeout=10)
+        if resp.status_code == 200:
+            import re
+            articles = re.findall(r'<a[^>]+href="(https?://www\.pingwest\.com/a/\d+)"[^>]*>([^<]{5,})</a>', resp.text)
+            if not articles:
+                articles = re.findall(r'href="(/a/\d+)"[^>]*>([^<]{5,})</a>', resp.text)
+                articles = [(f"https://www.pingwest.com{p}", t) for p, t in articles]
+            for link, title in articles[:8]:
+                title = title.strip()
+                if title and len(title) > 4:
+                    items.append({"title": title, "link": link, "source": "品玩", "pubDate": "", "company": "AI"})
+    except Exception as e:
+        print(f"pingwest error: {e}")
+    return items
+
+
+def fetch_geekpark():
+    """Fetch AI articles from 极客公园."""
+    items = []
+    try:
+        resp = requests.get("https://www.geekpark.net/", headers=HEADERS_ZH, timeout=10)
+        if resp.status_code == 200:
+            import re
+            articles = re.findall(r'<a[^>]+href="(https?://www\.geekpark\.net/news/\d+)"[^>]*>([^<]{5,})</a>', resp.text)
+            if not articles:
+                articles = re.findall(r'href="(/news/\d+)"[^>]*>([^<]{5,})</a>', resp.text)
+                articles = [(f"https://www.geekpark.net{p}", t) for p, t in articles]
+            for link, title in articles[:8]:
+                title = title.strip()
+                if title and len(title) > 4:
+                    items.append({"title": title, "link": link, "source": "极客公园", "pubDate": "", "company": "AI"})
+    except Exception as e:
+        print(f"geekpark error: {e}")
+    return items
+
+
+def fetch_all_chinese_ai_news():
+    """Fetch AI news from all Chinese tech media sources in parallel."""
+    fetchers = [
+        fetch_jiqizhixin,
+        fetch_qbitai,
+        fetch_leiphone,
+        fetch_ifanr,
+        fetch_pingwest,
+        fetch_geekpark,
+    ]
+    all_news = []
+    with ThreadPoolExecutor(max_workers=6) as executor:
+        futures = {executor.submit(fn): fn.__name__ for fn in fetchers}
+        for future in as_completed(futures):
+            try:
+                result = future.result()
+                all_news.extend(result)
+                print(f"{futures[future]}: got {len(result)} articles")
+            except Exception as e:
+                print(f"{futures[future]} failed: {e}")
+
+    seen_titles = set()
+    unique_news = []
+    for item in all_news:
+        if item["title"] not in seen_titles:
+            seen_titles.add(item["title"])
+            unique_news.append(item)
+
+    return unique_news[:30]
 
 
 def get_ai_news(lang="en"):
@@ -592,26 +731,27 @@ def get_ai_news(lang="en"):
     if not needs_refresh and "news" in cache and len(cache["news"]) > 0:
         return cache["news"]
 
-    companies = AI_NEWS_COMPANIES if lang == "en" else AI_NEWS_COMPANIES_ZH
     all_news = []
 
-    def fetch_company_news(company):
-        try:
-            if lang == "zh":
-                items = fetch_chinese_news(company["query"], num=3)
-            else:
-                items = fetch_google_news_rss(company["query"], num=3)
-            for item in items:
-                item["company"] = company["name"]
-            return items
-        except Exception as e:
-            print(f"Error fetching news for {company['name']}: {e}")
-            return []
+    if lang == "zh":
+        all_news = fetch_all_chinese_ai_news()
+    else:
+        companies = AI_NEWS_COMPANIES
 
-    with ThreadPoolExecutor(max_workers=5) as executor:
-        futures = {executor.submit(fetch_company_news, c): c for c in companies}
-        for future in as_completed(futures):
-            all_news.extend(future.result())
+        def fetch_company_news(company):
+            try:
+                items = fetch_google_news_rss(company["query"], num=3)
+                for item in items:
+                    item["company"] = company["name"]
+                return items
+            except Exception as e:
+                print(f"Error fetching news for {company['name']}: {e}")
+                return []
+
+        with ThreadPoolExecutor(max_workers=5) as executor:
+            futures = {executor.submit(fetch_company_news, c): c for c in companies}
+            for future in as_completed(futures):
+                all_news.extend(future.result())
 
     try:
         all_news.sort(key=lambda x: news_importance_score(x), reverse=True)
