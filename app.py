@@ -560,15 +560,32 @@ HEADERS_ZH = {
 
 
 def fetch_jiqizhixin():
-    """Fetch AI articles from 机器之心."""
+    """Fetch AI articles from 机器之心 via RSS or HTML."""
     items = []
     try:
+        # Try RSS first
+        resp = requests.get("https://www.jiqizhixin.com/rss", headers=HEADERS_ZH, timeout=10)
+        if resp.status_code == 200 and "xml" in resp.headers.get("content-type", ""):
+            root = ET.fromstring(resp.content)
+            for item in root.findall(".//{http://www.w3.org/2005/Atom}entry")[:8]:
+                title_el = item.find("{http://www.w3.org/2005/Atom}title")
+                link_el = item.find("{http://www.w3.org/2005/Atom}link")
+                title = title_el.text.strip() if title_el is not None and title_el.text else ""
+                link = link_el.get("href", "") if link_el is not None else ""
+                if title and len(title) > 4:
+                    items.append({"title": title, "link": link, "source": "机器之心", "pubDate": "", "company": "AI"})
+            if items:
+                return items
+        # Fallback: HTML scraping
         resp = requests.get("https://www.jiqizhixin.com/", headers=HEADERS_ZH, timeout=10)
         if resp.status_code == 200:
             import re
-            articles = re.findall(r'<a[^>]+href="(/articles/[^"]+)"[^>]*>.*?<span[^>]*>([^<]+)</span>', resp.text, re.DOTALL)
+            # Try multiple patterns
+            articles = re.findall(r'href="(/articles/[^"]+)"[^>]*>([^<]{5,})</a>', resp.text)
             if not articles:
-                articles = re.findall(r'href="(/articles/[^"]+)"[^>]*title="([^"]+)"', resp.text)
+                articles = re.findall(r'<a[^>]+href="(/articles/[^"]+)"[^>]*title="([^"]+)"', resp.text)
+            if not articles:
+                articles = re.findall(r'"url":"(/articles/[^"]+)","title":"([^"]+)"', resp.text)
             for path, title in articles[:8]:
                 title = title.strip()
                 if title and len(title) > 4:
@@ -618,9 +635,26 @@ def fetch_leiphone():
 
 
 def fetch_ifanr():
-    """Fetch AI articles from 爱范儿."""
+    """Fetch AI articles from 爱范儿 via RSS feed."""
     items = []
     try:
+        # ifanr is WordPress, try RSS feed
+        resp = requests.get("https://www.ifanr.com/feed", headers=HEADERS_ZH, timeout=10)
+        if resp.status_code == 200:
+            try:
+                root = ET.fromstring(resp.content)
+                for item in root.findall(".//item")[:10]:
+                    title = item.find("title").text if item.find("title") is not None else ""
+                    link = item.find("link").text if item.find("link") is not None else ""
+                    pub_date = item.find("pubDate").text if item.find("pubDate") is not None else ""
+                    title = title.strip() if title else ""
+                    if title and len(title) > 4:
+                        items.append({"title": title, "link": link, "source": "爱范儿", "pubDate": pub_date, "company": "AI"})
+                if items:
+                    return items
+            except ET.ParseError:
+                pass
+        # Fallback: HTML
         resp = requests.get("https://www.ifanr.com/category/ai", headers=HEADERS_ZH, timeout=10)
         if resp.status_code == 200:
             import re
@@ -635,18 +669,36 @@ def fetch_ifanr():
 
 
 def fetch_pingwest():
-    """Fetch AI articles from 品玩."""
+    """Fetch AI articles from 品玩 via API or HTML."""
     items = []
     try:
+        # Try PingWest API
+        resp = requests.get("https://api.pingwest.com/a/list/1?pagesize=10", headers=HEADERS_ZH, timeout=10)
+        if resp.status_code == 200:
+            try:
+                data = resp.json()
+                article_list = data.get("data", {}).get("list", [])
+                if not article_list:
+                    article_list = data.get("list", [])
+                for art in article_list[:8]:
+                    title = art.get("title", "").strip()
+                    art_id = art.get("id", "")
+                    link = f"https://www.pingwest.com/a/{art_id}" if art_id else ""
+                    if title and len(title) > 4 and link:
+                        items.append({"title": title, "link": link, "source": "品玩", "pubDate": "", "company": "AI"})
+                if items:
+                    return items
+            except:
+                pass
+        # Fallback: HTML
         resp = requests.get("https://www.pingwest.com/", headers=HEADERS_ZH, timeout=10)
         if resp.status_code == 200:
             import re
-            articles = re.findall(r'<a[^>]+href="(https?://www\.pingwest\.com/a/\d+)"[^>]*>([^<]{5,})</a>', resp.text)
-            if not articles:
-                articles = re.findall(r'href="(/a/\d+)"[^>]*>([^<]{5,})</a>', resp.text)
-                articles = [(f"https://www.pingwest.com{p}", t) for p, t in articles]
+            articles = re.findall(r'href="((?:https?://www\.pingwest\.com)?/a/\d+)"[^>]*>([^<]{5,})</a>', resp.text)
             for link, title in articles[:8]:
                 title = title.strip()
+                if not link.startswith("http"):
+                    link = f"https://www.pingwest.com{link}"
                 if title and len(title) > 4:
                     items.append({"title": title, "link": link, "source": "品玩", "pubDate": "", "company": "AI"})
     except Exception as e:
@@ -655,22 +707,80 @@ def fetch_pingwest():
 
 
 def fetch_geekpark():
-    """Fetch AI articles from 极客公园."""
+    """Fetch AI articles from 极客公园 via RSS or HTML."""
     items = []
     try:
+        # Try RSS
+        resp = requests.get("https://www.geekpark.net/rss", headers=HEADERS_ZH, timeout=10)
+        if resp.status_code == 200:
+            try:
+                root = ET.fromstring(resp.content)
+                for item in root.findall(".//item")[:10]:
+                    title = item.find("title").text if item.find("title") is not None else ""
+                    link = item.find("link").text if item.find("link") is not None else ""
+                    pub_date = item.find("pubDate").text if item.find("pubDate") is not None else ""
+                    title = title.strip() if title else ""
+                    if title and len(title) > 4:
+                        items.append({"title": title, "link": link, "source": "极客公园", "pubDate": pub_date, "company": "AI"})
+                if items:
+                    return items
+            except ET.ParseError:
+                pass
+        # Fallback: HTML with multiple regex patterns
         resp = requests.get("https://www.geekpark.net/", headers=HEADERS_ZH, timeout=10)
         if resp.status_code == 200:
             import re
-            articles = re.findall(r'<a[^>]+href="(https?://www\.geekpark\.net/news/\d+)"[^>]*>([^<]{5,})</a>', resp.text)
+            articles = re.findall(r'href="((?:https?://www\.geekpark\.net)?/news/\d+)"[^>]*>([^<]{5,})</a>', resp.text)
             if not articles:
-                articles = re.findall(r'href="(/news/\d+)"[^>]*>([^<]{5,})</a>', resp.text)
-                articles = [(f"https://www.geekpark.net{p}", t) for p, t in articles]
+                articles = re.findall(r'"url":"(/news/\d+)","title":"([^"]+)"', resp.text)
             for link, title in articles[:8]:
                 title = title.strip()
+                if not link.startswith("http"):
+                    link = f"https://www.geekpark.net{link}"
                 if title and len(title) > 4:
                     items.append({"title": title, "link": link, "source": "极客公园", "pubDate": "", "company": "AI"})
     except Exception as e:
         print(f"geekpark error: {e}")
+    return items
+
+
+def fetch_36kr():
+    """Fetch AI articles from 36氪."""
+    items = []
+    try:
+        resp = requests.get("https://36kr.com/information/AI/", headers=HEADERS_ZH, timeout=10)
+        if resp.status_code == 200:
+            import re
+            articles = re.findall(r'href="(/p/\d+)"[^>]*>([^<]{5,})</a>', resp.text)
+            if not articles:
+                articles = re.findall(r'"route":"/p/(\d+)"[^}]*"title":"([^"]+)"', resp.text)
+                articles = [(f"/p/{aid}", t) for aid, t in articles]
+            for path, title in articles[:8]:
+                title = title.strip()
+                link = f"https://36kr.com{path}" if path.startswith("/") else path
+                if title and len(title) > 4:
+                    items.append({"title": title, "link": link, "source": "36氪", "pubDate": "", "company": "AI"})
+    except Exception as e:
+        print(f"36kr error: {e}")
+    return items
+
+
+def fetch_ithome():
+    """Fetch AI articles from IT之家."""
+    items = []
+    try:
+        resp = requests.get("https://www.ithome.com/tag/AI", headers=HEADERS_ZH, timeout=10)
+        if resp.status_code == 200:
+            import re
+            articles = re.findall(r'<a[^>]+href="(https?://www\.ithome\.com/0/\d+/\d+\.htm)"[^>]*>([^<]{5,})</a>', resp.text)
+            if not articles:
+                articles = re.findall(r'href="(https?://www\.ithome\.com/\d+/\d+/\d+\.htm)"[^>]*>([^<]{5,})</a>', resp.text)
+            for link, title in articles[:8]:
+                title = title.strip()
+                if title and len(title) > 4:
+                    items.append({"title": title, "link": link, "source": "IT之家", "pubDate": "", "company": "AI"})
+    except Exception as e:
+        print(f"ithome error: {e}")
     return items
 
 
@@ -683,9 +793,11 @@ def fetch_all_chinese_ai_news():
         fetch_ifanr,
         fetch_pingwest,
         fetch_geekpark,
+        fetch_36kr,
+        fetch_ithome,
     ]
     all_news = []
-    with ThreadPoolExecutor(max_workers=6) as executor:
+    with ThreadPoolExecutor(max_workers=8) as executor:
         futures = {executor.submit(fn): fn.__name__ for fn in fetchers}
         for future in as_completed(futures):
             try:
