@@ -554,10 +554,9 @@ def fetch_chinese_news(query, num=3):
     """Fetch Chinese news via Google News RSS with decoded direct article links."""
     items = []
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
-    from urllib.parse import quote
 
     try:
-        url = f"https://news.google.com/rss/search?q={quote(query)}&hl=zh-CN&gl=CN&ceid=CN:zh-Hans"
+        url = f"https://news.google.com/rss/search?q={query}&hl=zh-CN&gl=CN&ceid=CN:zh-Hans"
         resp = requests.get(url, headers=headers, timeout=8)
         if resp.status_code == 200:
             root = ET.fromstring(resp.content)
@@ -643,15 +642,17 @@ def get_ai_news(lang="en"):
     except:
         pass
 
-    cache = {
-        "last_update": now.strftime("%Y-%m-%d %H:%M"),
-        "news": all_news,
-    }
-    try:
-        with open(cache_file, "w") as f:
-            json.dump(cache, f, ensure_ascii=False)
-    except:
-        pass
+    # Only cache if we got results
+    if all_news:
+        cache = {
+            "last_update": now.strftime("%Y-%m-%d %H:%M"),
+            "news": all_news,
+        }
+        try:
+            with open(cache_file, "w") as f:
+                json.dump(cache, f, ensure_ascii=False)
+        except:
+            pass
 
     return all_news
 
