@@ -519,39 +519,17 @@ def fetch_google_news_rss(query, num=5):
     return items
 
 
-def decode_google_news_url(google_url):
-    """Decode Google News encoded URL to get the actual article URL."""
-    import base64
-    try:
-        # Extract encoded part after /articles/
-        if "/articles/" not in google_url:
-            return google_url
-        encoded = google_url.split("/articles/")[-1].split("?")[0]
-        # Add base64 padding
-        padding = 4 - len(encoded) % 4
-        if padding != 4:
-            encoded += "=" * padding
-        # Decode (URL-safe base64)
-        decoded = base64.urlsafe_b64decode(encoded)
-        # Find the embedded URL in the protobuf bytes
-        decoded_str = decoded.decode("latin-1")
-        http_idx = decoded_str.find("http")
-        if http_idx >= 0:
-            url = decoded_str[http_idx:]
-            # URL ends at first control character
-            end = len(url)
-            for i, c in enumerate(url):
-                if ord(c) < 32 or ord(c) > 126:
-                    end = i
-                    break
-            return url[:end]
-    except:
-        pass
-    return google_url
+def make_bing_search_link(title):
+    """Create a Bing China search link for the article title (accessible in China)."""
+    from urllib.parse import quote
+    clean_title = title.strip()
+    if " - " in clean_title:
+        clean_title = clean_title.rsplit(" - ", 1)[0].strip()
+    return f"https://cn.bing.com/search?q=%22{quote(clean_title)}%22"
 
 
 def fetch_chinese_news(query, num=3):
-    """Fetch Chinese news via Google News RSS with decoded direct article links."""
+    """Fetch Chinese news via Google News RSS, with Bing search links (accessible in China)."""
     items = []
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
 
@@ -562,11 +540,9 @@ def fetch_chinese_news(query, num=3):
             root = ET.fromstring(resp.content)
             for item in root.findall(".//item")[:num]:
                 title = item.find("title").text if item.find("title") is not None else ""
-                raw_link = item.find("link").text if item.find("link") is not None else ""
                 pub_date = item.find("pubDate").text if item.find("pubDate") is not None else ""
                 source = item.find("source").text if item.find("source") is not None else ""
-                # Decode Google redirect to get actual article URL
-                link = decode_google_news_url(raw_link) if raw_link else ""
+                link = make_bing_search_link(title) if title else ""
                 if title:
                     items.append({"title": title, "link": link, "pubDate": pub_date, "source": source})
     except Exception as e:
