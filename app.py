@@ -784,6 +784,22 @@ def fetch_ithome():
     return items
 
 
+AI_KEYWORDS = [
+    "AI", "ai", "人工智能", "大模型", "GPT", "gpt", "LLM", "机器学习", "深度学习",
+    "神经网络", "智能体", "Agent", "agent", "ChatGPT", "Copilot", "算力", "芯片",
+    "英伟达", "NVIDIA", "nvidia", "半导体", "自动驾驶", "智驾", "大语言模型",
+    "Transformer", "transformer", "生成式", "AIGC", "Sora", "Claude", "Gemini",
+    "OpenAI", "Anthropic", "DeepMind", "智算", "训练", "推理", "模型",
+    "机器人", "具身智能", "多模态", "RAG", "向量", "Llama", "通义", "文心",
+    "豆包", "Kimi", "智谱", "百川", "讯飞", "星火",
+]
+
+
+def is_ai_related(title):
+    """Check if article title is AI-related."""
+    return any(kw in title for kw in AI_KEYWORDS)
+
+
 def fetch_all_chinese_ai_news():
     """Fetch AI news from all Chinese tech media sources in parallel."""
     fetchers = [
@@ -810,7 +826,7 @@ def fetch_all_chinese_ai_news():
     seen_titles = set()
     unique_news = []
     for item in all_news:
-        if item["title"] not in seen_titles:
+        if item["title"] not in seen_titles and is_ai_related(item["title"]):
             seen_titles.add(item["title"])
             unique_news.append(item)
 
