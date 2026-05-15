@@ -63,6 +63,32 @@ FALLBACK_PRICES = {
 
 CNY_RATE_FALLBACK = 7.25
 
+# Cached Yahoo session with crumb for authenticated API calls
+_yahoo_session = None
+_yahoo_crumb = None
+
+
+def get_yahoo_session():
+    """Get or create authenticated Yahoo Finance session with crumb."""
+    global _yahoo_session, _yahoo_crumb
+    if _yahoo_session and _yahoo_crumb:
+        return _yahoo_session, _yahoo_crumb
+    try:
+        session = requests.Session()
+        session.headers.update({
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        })
+        session.get("https://fc.yahoo.com", timeout=5)
+        crumb_resp = session.get("https://query2.finance.yahoo.com/v1/test/getcrumb", timeout=5)
+        if crumb_resp.status_code == 200 and crumb_resp.text.strip():
+            _yahoo_session = session
+            _yahoo_crumb = crumb_resp.text.strip()
+            print(f"Yahoo session initialized, crumb: {_yahoo_crumb[:10]}...")
+            return _yahoo_session, _yahoo_crumb
+    except Exception as e:
+        print(f"Yahoo session init error: {e}")
+    return None, None
+
 
 def fetch_yahoo_v8(symbol):
     try:
@@ -84,14 +110,15 @@ def fetch_yahoo_v8(symbol):
 
 def fetch_analyst_targets(symbol):
     """Fetch Wall Street analyst consensus price targets from Yahoo Finance."""
-    # Try multiple Yahoo Finance API endpoints
-    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
+    session, crumb = get_yahoo_session()
+    if not session or not crumb:
+        print(f"No Yahoo session for {symbol}")
+        return None
 
-    # Method 1: v10 quoteSummary (financialData module)
     try:
         url = f"https://query2.finance.yahoo.com/v10/finance/quoteSummary/{symbol}"
-        params = {"modules": "financialData"}
-        resp = requests.get(url, headers=headers, params=params, timeout=8)
+        params = {"modules": "financialData", "crumb": crumb}
+        resp = session.get(url, params=params, timeout=8)
         if resp.status_code == 200:
             data = resp.json()
             result = data.get("quoteSummary", {}).get("result", [])
@@ -111,62 +138,16 @@ def fetch_analyst_targets(symbol):
                         "recommendation": recommendation,
                         "numAnalysts": num_analysts,
                     }
+        elif resp.status_code == 401:
+            # Crumb expired, reset session
+            global _yahoo_session, _yahoo_crumb
+            _yahoo_session = None
+            _yahoo_crumb = None
+            print(f"Yahoo crumb expired, will retry next time for {symbol}")
+        else:
+            print(f"Analyst API returned {resp.status_code} for {symbol}")
     except Exception as e:
-        print(f"Analyst v10 error {symbol}: {e}")
-
-    # Method 2: v6 quote endpoint
-    try:
-        url = f"https://query1.finance.yahoo.com/v6/finance/quote"
-        params = {"symbols": symbol}
-        resp = requests.get(url, headers=headers, params=params, timeout=8)
-        if resp.status_code == 200:
-            data = resp.json()
-            quotes = data.get("quoteResponse", {}).get("result", [])
-            if quotes:
-                q = quotes[0]
-                target_mean = q.get("targetMeanPrice")
-                target_high = q.get("targetHighPrice")
-                target_low = q.get("targetLowPrice")
-                recommendation = q.get("recommendationKey", "")
-                num_analysts = q.get("numberOfAnalystOpinions", 0)
-                if target_mean and target_mean > 0:
-                    print(f"Analyst data (v6) for {symbol}: target={target_mean}")
-                    return {
-                        "targetMean": target_mean,
-                        "targetHigh": target_high,
-                        "targetLow": target_low,
-                        "recommendation": recommendation,
-                        "numAnalysts": num_analysts,
-                    }
-    except Exception as e:
-        print(f"Analyst v6 error {symbol}: {e}")
-
-    # Method 3: v7 quote endpoint
-    try:
-        url = f"https://query1.finance.yahoo.com/v7/finance/quote"
-        params = {"symbols": symbol}
-        resp = requests.get(url, headers=headers, params=params, timeout=8)
-        if resp.status_code == 200:
-            data = resp.json()
-            quotes = data.get("quoteResponse", {}).get("result", [])
-            if quotes:
-                q = quotes[0]
-                target_mean = q.get("targetMeanPrice")
-                target_high = q.get("targetHighPrice")
-                target_low = q.get("targetLowPrice")
-                recommendation = q.get("recommendationKey", "")
-                num_analysts = q.get("numberOfAnalystOpinions", 0)
-                if target_mean and target_mean > 0:
-                    print(f"Analyst data (v7) for {symbol}: target={target_mean}")
-                    return {
-                        "targetMean": target_mean,
-                        "targetHigh": target_high,
-                        "targetLow": target_low,
-                        "recommendation": recommendation,
-                        "numAnalysts": num_analysts,
-                    }
-    except Exception as e:
-        print(f"Analyst v7 error {symbol}: {e}")
+        print(f"Analyst target error {symbol}: {e}")
 
     print(f"No analyst data found for {symbol}")
     return None
