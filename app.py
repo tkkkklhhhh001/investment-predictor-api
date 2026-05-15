@@ -120,17 +120,59 @@ def fetch_price(symbol):
     return None
 
 
-def generate_predicted_prices(current_price, symbol, days=30, date_str=None):
+def generate_predicted_prices(current_price, symbol, days=30, date_str=None, history_prices=None):
+    """
+    Generate predicted prices based on recent momentum + mean reversion.
+    Uses actual historical trend as the primary signal.
+    """
     if date_str is None:
         date_str = datetime.now().strftime("%Y-%m-%d")
     np.random.seed(hash(symbol + "pred" + date_str) % 2**31)
-    volatility = 0.02
+
+    # Calculate recent momentum from history
+    daily_trend = 0.0
+    if history_prices and len(history_prices) >= 5:
+        # Short-term momentum (last 5 days)
+        short_returns = (history_prices[-1] - history_prices[-5]) / history_prices[-5]
+        short_daily = short_returns / 5
+
+        # Medium-term momentum (last 15 days if available)
+        if len(history_prices) >= 15:
+            med_returns = (history_prices[-1] - history_prices[-15]) / history_prices[-15]
+            med_daily = med_returns / 15
+        else:
+            med_daily = short_daily
+
+        # Blend: recent momentum carries forward but decays
+        daily_trend = short_daily * 0.6 + med_daily * 0.4
+
+    # Cap daily trend to prevent extreme extrapolation
+    daily_trend = max(min(daily_trend, 0.008), -0.008)  # Max ±0.8% per day
+
+    # Volatility based on asset type
+    noise_level = 0.003  # Default small noise
     if symbol in ["NVDA", "AMD"]:
-        volatility = 0.035
+        noise_level = 0.005
+    elif symbol in ["GC=F", "CNY=X"]:
+        noise_level = 0.001
+
     prices = [current_price]
     for i in range(days - 1):
-        change = np.random.normal(0.001, volatility)
-        prices.append(round(prices[-1] * (1 + change), 2))
+        # Trend decays over time (mean reversion)
+        decay = 0.92 ** i  # Trend influence fades ~50% every 8 days
+        day_trend = daily_trend * decay
+
+        # Small random noise
+        noise = np.random.normal(0, noise_level)
+
+        # Mean reversion: pull back toward current price if drifted too far
+        drift = (prices[-1] - current_price) / current_price
+        reversion = -drift * 0.02  # Gentle pull back
+
+        change = day_trend + noise + reversion
+        new_price = prices[-1] * (1 + change)
+        prices.append(round(new_price, 2))
+
     return prices
 
 
@@ -361,7 +403,7 @@ def fetch_asset_data(asset, category, cny_rate, today_str):
             history_prices = [round(p * cny_rate / 31.1035, 2) for p in history_prices]
 
     prediction = predict(current_price, symbol + category)
-    predicted_prices = generate_predicted_prices(current_price, symbol)
+    predicted_prices = generate_predicted_prices(current_price, symbol, history_prices=history_prices)
     reasons = get_prediction_reasons(symbol, prediction["trend"])
 
     # Use actual curve values for 7d and 30d predictions (not separate calculation)
