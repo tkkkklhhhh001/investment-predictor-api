@@ -149,49 +149,46 @@ def fetch_price(symbol):
     return None
 
 
-def generate_predicted_prices(current_price, symbol, days=365, date_str=None, history_prices=None, analyst_data=None):
+def generate_predicted_prices(current_price, symbol, days=30, date_str=None, history_prices=None, analyst_data=None):
     """
-    Generate 12-month predicted price curve.
-    - If analyst target exists: smooth curve from current price toward analyst target
-    - Fallback: momentum-based short-term extrapolation
+    Generate 30-day predicted price curve based on recent momentum.
+    Used for chart visualization only. 12M target shown separately as number.
     """
     if date_str is None:
         date_str = datetime.now().strftime("%Y-%m-%d")
     np.random.seed(hash(symbol + "pred" + date_str) % 2**31)
 
-    # Determine 12-month target
-    target_price = None
-    if analyst_data and analyst_data.get("targetMean"):
-        target_price = analyst_data["targetMean"]
+    # Short-term momentum from recent history
+    daily_momentum = 0.0
+    if history_prices and len(history_prices) >= 5:
+        recent_return = (history_prices[-1] - history_prices[-5]) / history_prices[-5]
+        daily_momentum = recent_return / 5
+        daily_momentum = max(min(daily_momentum, 0.006), -0.006)
 
-    if target_price is None:
-        # Fallback: slight momentum-based projection
-        if history_prices and len(history_prices) >= 10:
-            monthly_return = (history_prices[-1] - history_prices[0]) / history_prices[0]
-            target_price = current_price * (1 + monthly_return * 0.5)
-        else:
-            target_price = current_price * 1.02
+    # Analyst direction as slight bias
+    analyst_bias = 0.0
+    if analyst_data and analyst_data.get("targetMean"):
+        target = analyst_data["targetMean"]
+        if target > current_price:
+            analyst_bias = 0.0005
+        elif target < current_price:
+            analyst_bias = -0.0005
 
     # Noise level
-    noise_level = 0.002
+    noise_level = 0.003
     if symbol in ["NVDA", "AMD"]:
-        noise_level = 0.003
+        noise_level = 0.004
     elif symbol in ["GC=F", "CNY=X"]:
-        noise_level = 0.0008
+        noise_level = 0.001
 
-    # Generate smooth curve toward target with realistic noise
     prices = [current_price]
     for i in range(1, days):
-        # Smooth interpolation toward target (S-curve)
-        t = i / (days - 1)
-        smooth_t = t * t * (3 - 2 * t)  # Hermite smoothstep
-        base_price = current_price + (target_price - current_price) * smooth_t
-
-        # Add noise that scales with time
-        noise = np.random.normal(0, noise_level * (1 + t * 0.5)) * current_price
-        price = base_price + noise
-
-        prices.append(round(price, 2))
+        momentum_weight = 0.85 ** i  # Momentum decays
+        day_momentum = daily_momentum * momentum_weight
+        noise = np.random.normal(0, noise_level)
+        change = day_momentum + analyst_bias + noise
+        new_price = prices[-1] * (1 + change)
+        prices.append(round(new_price, 2))
 
     return prices
 
@@ -446,14 +443,14 @@ def fetch_asset_data(asset, category, cny_rate, today_str):
             prediction["trend"] = "NEUTRAL"
     elif len(predicted_prices) >= 7:
         prediction["predictedPrice7d"] = predicted_prices[6]
-        prediction["predictedPrice30d"] = predicted_prices[-1]  # End of curve
+        prediction["predictedPrice30d"] = predicted_prices[-1]
         prediction["change7dPercent"] = round((predicted_prices[6] - current_price) / current_price * 100, 2)
         prediction["change30dPercent"] = round((predicted_prices[-1] - current_price) / current_price * 100, 2)
-        prediction["targetPeriod"] = "12M"
+        prediction["targetPeriod"] = "30D"
         change = prediction["change30dPercent"]
-        if change > 5:
+        if change > 2:
             prediction["trend"] = "UP"
-        elif change < -5:
+        elif change < -2:
             prediction["trend"] = "DOWN"
         else:
             prediction["trend"] = "NEUTRAL"
@@ -501,7 +498,7 @@ def fetch_asset_data(asset, category, cny_rate, today_str):
         "currentPrice": round(current_price, 2),
         "source": source,
         "historyPrices": history_prices,
-        "predictedPrices": predicted_prices[::6],  # Sample every 6 days (~60 points for 12M)
+        "predictedPrices": predicted_prices,
         "comparison": comparison,
         "reasons": reasons,
         **prediction,
