@@ -84,30 +84,91 @@ def fetch_yahoo_v8(symbol):
 
 def fetch_analyst_targets(symbol):
     """Fetch Wall Street analyst consensus price targets from Yahoo Finance."""
+    # Try multiple Yahoo Finance API endpoints
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
+
+    # Method 1: v10 quoteSummary (financialData module)
     try:
         url = f"https://query2.finance.yahoo.com/v10/finance/quoteSummary/{symbol}"
-        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
         params = {"modules": "financialData"}
-        resp = requests.get(url, headers=headers, params=params, timeout=10)
-        data = resp.json()
-        result = data.get("quoteSummary", {}).get("result", [])
-        if result:
-            fin = result[0].get("financialData", {})
-            target_mean = fin.get("targetMeanPrice", {}).get("raw")
-            target_high = fin.get("targetHighPrice", {}).get("raw")
-            target_low = fin.get("targetLowPrice", {}).get("raw")
-            recommendation = fin.get("recommendationKey", "")
-            num_analysts = fin.get("numberOfAnalystOpinions", {}).get("raw", 0)
-            if target_mean and target_mean > 0:
-                return {
-                    "targetMean": target_mean,
-                    "targetHigh": target_high,
-                    "targetLow": target_low,
-                    "recommendation": recommendation,
-                    "numAnalysts": num_analysts,
-                }
+        resp = requests.get(url, headers=headers, params=params, timeout=8)
+        if resp.status_code == 200:
+            data = resp.json()
+            result = data.get("quoteSummary", {}).get("result", [])
+            if result:
+                fin = result[0].get("financialData", {})
+                target_mean = fin.get("targetMeanPrice", {}).get("raw")
+                target_high = fin.get("targetHighPrice", {}).get("raw")
+                target_low = fin.get("targetLowPrice", {}).get("raw")
+                recommendation = fin.get("recommendationKey", "")
+                num_analysts = fin.get("numberOfAnalystOpinions", {}).get("raw", 0)
+                if target_mean and target_mean > 0:
+                    print(f"Analyst data for {symbol}: target={target_mean}, rec={recommendation}, analysts={num_analysts}")
+                    return {
+                        "targetMean": target_mean,
+                        "targetHigh": target_high,
+                        "targetLow": target_low,
+                        "recommendation": recommendation,
+                        "numAnalysts": num_analysts,
+                    }
     except Exception as e:
-        print(f"Analyst target error {symbol}: {e}")
+        print(f"Analyst v10 error {symbol}: {e}")
+
+    # Method 2: v6 quote endpoint
+    try:
+        url = f"https://query1.finance.yahoo.com/v6/finance/quote"
+        params = {"symbols": symbol}
+        resp = requests.get(url, headers=headers, params=params, timeout=8)
+        if resp.status_code == 200:
+            data = resp.json()
+            quotes = data.get("quoteResponse", {}).get("result", [])
+            if quotes:
+                q = quotes[0]
+                target_mean = q.get("targetMeanPrice")
+                target_high = q.get("targetHighPrice")
+                target_low = q.get("targetLowPrice")
+                recommendation = q.get("recommendationKey", "")
+                num_analysts = q.get("numberOfAnalystOpinions", 0)
+                if target_mean and target_mean > 0:
+                    print(f"Analyst data (v6) for {symbol}: target={target_mean}")
+                    return {
+                        "targetMean": target_mean,
+                        "targetHigh": target_high,
+                        "targetLow": target_low,
+                        "recommendation": recommendation,
+                        "numAnalysts": num_analysts,
+                    }
+    except Exception as e:
+        print(f"Analyst v6 error {symbol}: {e}")
+
+    # Method 3: v7 quote endpoint
+    try:
+        url = f"https://query1.finance.yahoo.com/v7/finance/quote"
+        params = {"symbols": symbol}
+        resp = requests.get(url, headers=headers, params=params, timeout=8)
+        if resp.status_code == 200:
+            data = resp.json()
+            quotes = data.get("quoteResponse", {}).get("result", [])
+            if quotes:
+                q = quotes[0]
+                target_mean = q.get("targetMeanPrice")
+                target_high = q.get("targetHighPrice")
+                target_low = q.get("targetLowPrice")
+                recommendation = q.get("recommendationKey", "")
+                num_analysts = q.get("numberOfAnalystOpinions", 0)
+                if target_mean and target_mean > 0:
+                    print(f"Analyst data (v7) for {symbol}: target={target_mean}")
+                    return {
+                        "targetMean": target_mean,
+                        "targetHigh": target_high,
+                        "targetLow": target_low,
+                        "recommendation": recommendation,
+                        "numAnalysts": num_analysts,
+                    }
+    except Exception as e:
+        print(f"Analyst v7 error {symbol}: {e}")
+
+    print(f"No analyst data found for {symbol}")
     return None
 
 
