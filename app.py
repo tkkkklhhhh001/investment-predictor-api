@@ -364,6 +364,21 @@ def fetch_asset_data(asset, category, cny_rate, today_str):
     predicted_prices = generate_predicted_prices(current_price, symbol)
     reasons = get_prediction_reasons(symbol, prediction["trend"])
 
+    # Use actual curve values for 7d and 30d predictions (not separate calculation)
+    if len(predicted_prices) >= 30:
+        prediction["predictedPrice7d"] = predicted_prices[6]   # Day 7
+        prediction["predictedPrice30d"] = predicted_prices[29]  # Day 30
+        prediction["change7dPercent"] = round((predicted_prices[6] - current_price) / current_price * 100, 2)
+        prediction["change30dPercent"] = round((predicted_prices[29] - current_price) / current_price * 100, 2)
+        # Update trend based on actual 7d prediction
+        change_7d = prediction["change7dPercent"]
+        if change_7d > 1:
+            prediction["trend"] = "UP"
+        elif change_7d < -1:
+            prediction["trend"] = "DOWN"
+        else:
+            prediction["trend"] = "NEUTRAL"
+
     save_daily_prediction(symbol, today_str, predicted_prices)
 
     comparison = build_comparison(symbol, history_prices, history_dates, predicted_prices)
