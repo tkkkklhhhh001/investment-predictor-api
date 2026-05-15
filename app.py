@@ -149,12 +149,10 @@ def fetch_price(symbol):
     return None
 
 
-def generate_predicted_prices(current_price, symbol, days=30, date_str=None, history_prices=None, analyst_data=None):
+def generate_predicted_prices(current_price, symbol, days=7, date_str=None, history_prices=None, analyst_data=None):
     """
-    Generate predicted prices:
-    - Short-term (1-7 days): based on recent price momentum
-    - Medium-term (7-30 days): gradual move toward analyst target direction
-    - Analyst 12-month target shown as-is, not scaled
+    Generate short-term (7-day) predicted prices based on recent momentum.
+    Only short-term momentum prediction is meaningful without fundamental analysis.
     """
     if date_str is None:
         date_str = datetime.now().strftime("%Y-%m-%d")
@@ -167,37 +165,28 @@ def generate_predicted_prices(current_price, symbol, days=30, date_str=None, his
         daily_momentum = recent_return / 5
         daily_momentum = max(min(daily_momentum, 0.006), -0.006)
 
-    # Analyst direction (up or down bias for medium-term)
+    # Analyst direction as slight bias
     analyst_bias = 0.0
     if analyst_data and analyst_data.get("targetMean"):
         target = analyst_data["targetMean"]
-        # Just use the direction and a small daily bias
         if target > current_price:
-            analyst_bias = 0.001  # Slight upward bias per day
+            analyst_bias = 0.0005
         elif target < current_price:
-            analyst_bias = -0.001  # Slight downward bias per day
+            analyst_bias = -0.0005
 
     # Noise level
     noise_level = 0.003
     if symbol in ["NVDA", "AMD"]:
-        noise_level = 0.005
+        noise_level = 0.004
     elif symbol in ["GC=F", "CNY=X"]:
         noise_level = 0.001
 
     prices = [current_price]
     for i in range(1, days):
-        # Short-term: momentum dominates but decays
-        momentum_weight = 0.85 ** i  # Decays to ~20% by day 7
+        momentum_weight = 0.85 ** i
         day_momentum = daily_momentum * momentum_weight
-
-        # Medium-term: analyst direction grows
-        analyst_weight = min(i / 15.0, 1.0)  # Ramps up over 15 days
-        day_bias = analyst_bias * analyst_weight
-
-        # Noise
         noise = np.random.normal(0, noise_level)
-
-        change = day_momentum + day_bias + noise
+        change = day_momentum + analyst_bias + noise
         new_price = prices[-1] * (1 + change)
         prices.append(round(new_price, 2))
 
