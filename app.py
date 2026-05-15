@@ -437,20 +437,45 @@ def fetch_asset_data(asset, category, cny_rate, today_str):
     )
     reasons = get_prediction_reasons(symbol, prediction["trend"])
 
-    # Use actual curve values for 7d and 30d predictions (not separate calculation)
-    if len(predicted_prices) >= 30:
-        prediction["predictedPrice7d"] = predicted_prices[6]   # Day 7
-        prediction["predictedPrice30d"] = predicted_prices[29]  # Day 30
-        prediction["change7dPercent"] = round((predicted_prices[6] - current_price) / current_price * 100, 2)
-        prediction["change30dPercent"] = round((predicted_prices[29] - current_price) / current_price * 100, 2)
-        # Update trend based on actual 7d prediction
-        change_7d = prediction["change7dPercent"]
-        if change_7d > 1:
+    # Use analyst 12-month target directly as the prediction
+    if analyst_data and analyst_data.get("targetMean"):
+        target = analyst_data["targetMean"]
+        prediction["predictedPrice7d"] = predicted_prices[6] if len(predicted_prices) > 6 else current_price
+        prediction["predictedPrice30d"] = round(target, 2)  # This is actually 12M target
+        prediction["change7dPercent"] = round((predicted_prices[6] - current_price) / current_price * 100, 2) if len(predicted_prices) > 6 else 0
+        prediction["change30dPercent"] = round((target - current_price) / current_price * 100, 2)
+        prediction["targetPeriod"] = "12M"
+        # Trend based on analyst target direction
+        if target > current_price * 1.05:
             prediction["trend"] = "UP"
-        elif change_7d < -1:
+        elif target < current_price * 0.95:
             prediction["trend"] = "DOWN"
         else:
             prediction["trend"] = "NEUTRAL"
+    elif len(predicted_prices) >= 30:
+        prediction["predictedPrice7d"] = predicted_prices[6]
+        prediction["predictedPrice30d"] = predicted_prices[29]
+        prediction["change7dPercent"] = round((predicted_prices[6] - current_price) / current_price * 100, 2)
+        prediction["change30dPercent"] = round((predicted_prices[29] - current_price) / current_price * 100, 2)
+        prediction["targetPeriod"] = "30D"
+        change = prediction["change30dPercent"]
+        if change > 1:
+            prediction["trend"] = "UP"
+        elif change < -1:
+            prediction["trend"] = "DOWN"
+        else:
+            prediction["trend"] = "NEUTRAL"
+
+    # Confidence based on analyst consensus strength
+    if analyst_data:
+        num = analyst_data.get("numAnalysts", 0)
+        rec = analyst_data.get("recommendation", "")
+        if rec in ["strong_buy", "strong_sell"] and num >= 20:
+            prediction["confidence"] = min(85, 60 + num)
+        elif rec in ["buy", "sell"] and num >= 10:
+            prediction["confidence"] = min(75, 55 + num)
+        else:
+            prediction["confidence"] = min(65, 45 + num)
 
     save_daily_prediction(symbol, today_str, predicted_prices)
 
@@ -472,7 +497,10 @@ def fetch_asset_data(asset, category, cny_rate, today_str):
                 "strong_sell": "Strong Sell"
             }.get(rec, rec.title())
             target_str = f", 12M target ${target:.0f}" if target else ""
-            reasons["summary"] = f"Analyst consensus: {rec_text} ({num} analysts{target_str})"
+            range_str = ""
+            if target_low and target_high:
+                range_str = f" (range ${target_low:.0f}-${target_high:.0f})"
+            reasons["summary"] = f"Analyst consensus: {rec_text} ({num} analysts{target_str}){range_str}"
 
     return {
         "symbol": display_symbol,
