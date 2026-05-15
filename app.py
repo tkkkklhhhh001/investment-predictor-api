@@ -82,6 +82,35 @@ def fetch_yahoo_v8(symbol):
     return None
 
 
+def fetch_analyst_targets(symbol):
+    """Fetch Wall Street analyst consensus price targets from Yahoo Finance."""
+    try:
+        url = f"https://query2.finance.yahoo.com/v10/finance/quoteSummary/{symbol}"
+        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+        params = {"modules": "financialData"}
+        resp = requests.get(url, headers=headers, params=params, timeout=10)
+        data = resp.json()
+        result = data.get("quoteSummary", {}).get("result", [])
+        if result:
+            fin = result[0].get("financialData", {})
+            target_mean = fin.get("targetMeanPrice", {}).get("raw")
+            target_high = fin.get("targetHighPrice", {}).get("raw")
+            target_low = fin.get("targetLowPrice", {}).get("raw")
+            recommendation = fin.get("recommendationKey", "")
+            num_analysts = fin.get("numberOfAnalystOpinions", {}).get("raw", 0)
+            if target_mean and target_mean > 0:
+                return {
+                    "targetMean": target_mean,
+                    "targetHigh": target_high,
+                    "targetLow": target_low,
+                    "recommendation": recommendation,
+                    "numAnalysts": num_analysts,
+                }
+    except Exception as e:
+        print(f"Analyst target error {symbol}: {e}")
+    return None
+
+
 def fetch_yahoo_history(symbol, days=30):
     try:
         url = f"https://query2.finance.yahoo.com/v8/finance/chart/{symbol}"
@@ -120,58 +149,61 @@ def fetch_price(symbol):
     return None
 
 
-def generate_predicted_prices(current_price, symbol, days=30, date_str=None, history_prices=None):
+def generate_predicted_prices(current_price, symbol, days=30, date_str=None, history_prices=None, analyst_data=None):
     """
-    Generate predicted prices based on recent momentum + mean reversion.
-    Uses actual historical trend as the primary signal.
+    Generate predicted prices based on analyst consensus targets.
+    - Uses analyst target price as the 30-day endpoint
+    - Interpolates smoothly from current price toward target
+    - Adds small realistic daily noise
+    - Falls back to momentum-based prediction if no analyst data
     """
     if date_str is None:
         date_str = datetime.now().strftime("%Y-%m-%d")
     np.random.seed(hash(symbol + "pred" + date_str) % 2**31)
 
-    # Calculate recent momentum from history
-    daily_trend = 0.0
-    if history_prices and len(history_prices) >= 5:
-        # Short-term momentum (last 5 days)
-        short_returns = (history_prices[-1] - history_prices[-5]) / history_prices[-5]
-        short_daily = short_returns / 5
+    # Determine target price
+    target_price = None
+    if analyst_data:
+        target_mean = analyst_data.get("targetMean")
+        if target_mean and target_mean > 0:
+            # Analyst targets are typically 12-month targets
+            # Scale to 30-day: assume linear path, take 30/365 of the move
+            full_move = target_mean - current_price
+            target_price = current_price + full_move * (30.0 / 365.0)
 
-        # Medium-term momentum (last 15 days if available)
-        if len(history_prices) >= 15:
-            med_returns = (history_prices[-1] - history_prices[-15]) / history_prices[-15]
-            med_daily = med_returns / 15
-        else:
-            med_daily = short_daily
+    if target_price is None and history_prices and len(history_prices) >= 5:
+        # Fallback: use recent momentum
+        short_return = (history_prices[-1] - history_prices[-5]) / history_prices[-5]
+        daily_trend = short_return / 5
+        daily_trend = max(min(daily_trend, 0.005), -0.005)
+        target_price = current_price * (1 + daily_trend * days * 0.5)
 
-        # Blend: recent momentum carries forward but decays
-        daily_trend = short_daily * 0.6 + med_daily * 0.4
+    if target_price is None:
+        target_price = current_price * 1.01  # Minimal upward bias
 
-    # Cap daily trend to prevent extreme extrapolation
-    daily_trend = max(min(daily_trend, 0.008), -0.008)  # Max ±0.8% per day
-
-    # Volatility based on asset type
-    noise_level = 0.003  # Default small noise
+    # Noise level based on asset type
+    noise_level = 0.003
     if symbol in ["NVDA", "AMD"]:
         noise_level = 0.005
     elif symbol in ["GC=F", "CNY=X"]:
         noise_level = 0.001
 
+    # Generate smooth curve toward target with small noise
     prices = [current_price]
-    for i in range(days - 1):
-        # Trend decays over time (mean reversion)
-        decay = 0.92 ** i  # Trend influence fades ~50% every 8 days
-        day_trend = daily_trend * decay
+    for i in range(1, days):
+        # Progress toward target (ease-in-out curve)
+        t = i / (days - 1)
+        # Smooth interpolation (slightly accelerating)
+        smooth_t = t * t * (3 - 2 * t)  # Hermite smoothstep
+        base_price = current_price + (target_price - current_price) * smooth_t
 
-        # Small random noise
-        noise = np.random.normal(0, noise_level)
+        # Add small daily noise
+        noise = np.random.normal(0, noise_level) * current_price
+        price = base_price + noise
 
-        # Mean reversion: pull back toward current price if drifted too far
-        drift = (prices[-1] - current_price) / current_price
-        reversion = -drift * 0.02  # Gentle pull back
-
-        change = day_trend + noise + reversion
-        new_price = prices[-1] * (1 + change)
-        prices.append(round(new_price, 2))
+        # Ensure price stays positive
+        price = max(price, current_price * 0.7)
+        prices.append(round(price, 2))
 
     return prices
 
@@ -403,7 +435,10 @@ def fetch_asset_data(asset, category, cny_rate, today_str):
             history_prices = [round(p * cny_rate / 31.1035, 2) for p in history_prices]
 
     prediction = predict(current_price, symbol + category)
-    predicted_prices = generate_predicted_prices(current_price, symbol, history_prices=history_prices)
+    analyst_data = fetch_analyst_targets(symbol)
+    predicted_prices = generate_predicted_prices(
+        current_price, symbol, history_prices=history_prices, analyst_data=analyst_data
+    )
     reasons = get_prediction_reasons(symbol, prediction["trend"])
 
     # Use actual curve values for 7d and 30d predictions (not separate calculation)
@@ -424,6 +459,21 @@ def fetch_asset_data(asset, category, cny_rate, today_str):
     save_daily_prediction(symbol, today_str, predicted_prices)
 
     comparison = build_comparison(symbol, history_prices, history_dates, predicted_prices)
+
+    # Enhance reasons with analyst recommendation
+    if analyst_data:
+        rec = analyst_data.get("recommendation", "")
+        num = analyst_data.get("numAnalysts", 0)
+        target = analyst_data.get("targetMean")
+        if rec and reasons:
+            rec_text = {
+                "strong_buy": "Strong Buy",
+                "buy": "Buy",
+                "hold": "Hold",
+                "sell": "Sell",
+                "strong_sell": "Strong Sell"
+            }.get(rec, rec.title())
+            reasons["summary"] = f"Analyst consensus: {rec_text} ({num} analysts, target ${target:.0f})" if target else f"Analyst consensus: {rec_text} ({num} analysts)"
 
     return {
         "symbol": display_symbol,
