@@ -151,59 +151,55 @@ def fetch_price(symbol):
 
 def generate_predicted_prices(current_price, symbol, days=30, date_str=None, history_prices=None, analyst_data=None):
     """
-    Generate predicted prices based on analyst consensus targets.
-    - Uses analyst target price as the 30-day endpoint
-    - Interpolates smoothly from current price toward target
-    - Adds small realistic daily noise
-    - Falls back to momentum-based prediction if no analyst data
+    Generate predicted prices:
+    - Short-term (1-7 days): based on recent price momentum
+    - Medium-term (7-30 days): gradual move toward analyst target direction
+    - Analyst 12-month target shown as-is, not scaled
     """
     if date_str is None:
         date_str = datetime.now().strftime("%Y-%m-%d")
     np.random.seed(hash(symbol + "pred" + date_str) % 2**31)
 
-    # Determine target price
-    target_price = None
-    if analyst_data:
-        target_mean = analyst_data.get("targetMean")
-        if target_mean and target_mean > 0:
-            # Analyst targets are typically 12-month targets
-            # Scale to 30-day: assume linear path, take 30/365 of the move
-            full_move = target_mean - current_price
-            target_price = current_price + full_move * (30.0 / 365.0)
+    # Calculate short-term momentum from recent history
+    daily_momentum = 0.0
+    if history_prices and len(history_prices) >= 5:
+        recent_return = (history_prices[-1] - history_prices[-5]) / history_prices[-5]
+        daily_momentum = recent_return / 5
+        daily_momentum = max(min(daily_momentum, 0.006), -0.006)
 
-    if target_price is None and history_prices and len(history_prices) >= 5:
-        # Fallback: use recent momentum
-        short_return = (history_prices[-1] - history_prices[-5]) / history_prices[-5]
-        daily_trend = short_return / 5
-        daily_trend = max(min(daily_trend, 0.005), -0.005)
-        target_price = current_price * (1 + daily_trend * days * 0.5)
+    # Analyst direction (up or down bias for medium-term)
+    analyst_bias = 0.0
+    if analyst_data and analyst_data.get("targetMean"):
+        target = analyst_data["targetMean"]
+        # Just use the direction and a small daily bias
+        if target > current_price:
+            analyst_bias = 0.001  # Slight upward bias per day
+        elif target < current_price:
+            analyst_bias = -0.001  # Slight downward bias per day
 
-    if target_price is None:
-        target_price = current_price * 1.01  # Minimal upward bias
-
-    # Noise level based on asset type
+    # Noise level
     noise_level = 0.003
     if symbol in ["NVDA", "AMD"]:
         noise_level = 0.005
     elif symbol in ["GC=F", "CNY=X"]:
         noise_level = 0.001
 
-    # Generate smooth curve toward target with small noise
     prices = [current_price]
     for i in range(1, days):
-        # Progress toward target (ease-in-out curve)
-        t = i / (days - 1)
-        # Smooth interpolation (slightly accelerating)
-        smooth_t = t * t * (3 - 2 * t)  # Hermite smoothstep
-        base_price = current_price + (target_price - current_price) * smooth_t
+        # Short-term: momentum dominates but decays
+        momentum_weight = 0.85 ** i  # Decays to ~20% by day 7
+        day_momentum = daily_momentum * momentum_weight
 
-        # Add small daily noise
-        noise = np.random.normal(0, noise_level) * current_price
-        price = base_price + noise
+        # Medium-term: analyst direction grows
+        analyst_weight = min(i / 15.0, 1.0)  # Ramps up over 15 days
+        day_bias = analyst_bias * analyst_weight
 
-        # Ensure price stays positive
-        price = max(price, current_price * 0.7)
-        prices.append(round(price, 2))
+        # Noise
+        noise = np.random.normal(0, noise_level)
+
+        change = day_momentum + day_bias + noise
+        new_price = prices[-1] * (1 + change)
+        prices.append(round(new_price, 2))
 
     return prices
 
@@ -465,6 +461,8 @@ def fetch_asset_data(asset, category, cny_rate, today_str):
         rec = analyst_data.get("recommendation", "")
         num = analyst_data.get("numAnalysts", 0)
         target = analyst_data.get("targetMean")
+        target_high = analyst_data.get("targetHigh")
+        target_low = analyst_data.get("targetLow")
         if rec and reasons:
             rec_text = {
                 "strong_buy": "Strong Buy",
@@ -473,7 +471,8 @@ def fetch_asset_data(asset, category, cny_rate, today_str):
                 "sell": "Sell",
                 "strong_sell": "Strong Sell"
             }.get(rec, rec.title())
-            reasons["summary"] = f"Analyst consensus: {rec_text} ({num} analysts, target ${target:.0f})" if target else f"Analyst consensus: {rec_text} ({num} analysts)"
+            target_str = f", 12M target ${target:.0f}" if target else ""
+            reasons["summary"] = f"Analyst consensus: {rec_text} ({num} analysts{target_str})"
 
     return {
         "symbol": display_symbol,
