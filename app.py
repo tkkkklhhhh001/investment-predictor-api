@@ -63,32 +63,6 @@ FALLBACK_PRICES = {
 
 CNY_RATE_FALLBACK = 7.25
 
-# Cached Yahoo session with crumb for authenticated API calls
-_yahoo_session = None
-_yahoo_crumb = None
-
-
-def get_yahoo_session():
-    """Get or create authenticated Yahoo Finance session with crumb."""
-    global _yahoo_session, _yahoo_crumb
-    if _yahoo_session and _yahoo_crumb:
-        return _yahoo_session, _yahoo_crumb
-    try:
-        session = requests.Session()
-        session.headers.update({
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-        })
-        session.get("https://fc.yahoo.com", timeout=5)
-        crumb_resp = session.get("https://query2.finance.yahoo.com/v1/test/getcrumb", timeout=5)
-        if crumb_resp.status_code == 200 and crumb_resp.text.strip():
-            _yahoo_session = session
-            _yahoo_crumb = crumb_resp.text.strip()
-            print(f"Yahoo session initialized, crumb: {_yahoo_crumb[:10]}...")
-            return _yahoo_session, _yahoo_crumb
-    except Exception as e:
-        print(f"Yahoo session init error: {e}")
-    return None, None
-
 
 def fetch_yahoo_v8(symbol):
     try:
@@ -109,43 +83,25 @@ def fetch_yahoo_v8(symbol):
 
 
 def fetch_analyst_targets(symbol):
-    """Fetch Wall Street analyst consensus price targets from Yahoo Finance."""
-    session, crumb = get_yahoo_session()
-    if not session or not crumb:
-        print(f"No Yahoo session for {symbol}")
-        return None
-
+    """Fetch Wall Street analyst consensus price targets using yfinance."""
     try:
-        url = f"https://query2.finance.yahoo.com/v10/finance/quoteSummary/{symbol}"
-        params = {"modules": "financialData", "crumb": crumb}
-        resp = session.get(url, params=params, timeout=8)
-        if resp.status_code == 200:
-            data = resp.json()
-            result = data.get("quoteSummary", {}).get("result", [])
-            if result:
-                fin = result[0].get("financialData", {})
-                target_mean = fin.get("targetMeanPrice", {}).get("raw")
-                target_high = fin.get("targetHighPrice", {}).get("raw")
-                target_low = fin.get("targetLowPrice", {}).get("raw")
-                recommendation = fin.get("recommendationKey", "")
-                num_analysts = fin.get("numberOfAnalystOpinions", {}).get("raw", 0)
-                if target_mean and target_mean > 0:
-                    print(f"Analyst data for {symbol}: target={target_mean}, rec={recommendation}, analysts={num_analysts}")
-                    return {
-                        "targetMean": target_mean,
-                        "targetHigh": target_high,
-                        "targetLow": target_low,
-                        "recommendation": recommendation,
-                        "numAnalysts": num_analysts,
-                    }
-        elif resp.status_code == 401:
-            # Crumb expired, reset session
-            global _yahoo_session, _yahoo_crumb
-            _yahoo_session = None
-            _yahoo_crumb = None
-            print(f"Yahoo crumb expired, will retry next time for {symbol}")
-        else:
-            print(f"Analyst API returned {resp.status_code} for {symbol}")
+        import yfinance as yf
+        ticker = yf.Ticker(symbol)
+        info = ticker.info
+        target_mean = info.get("targetMeanPrice")
+        target_high = info.get("targetHighPrice")
+        target_low = info.get("targetLowPrice")
+        recommendation = info.get("recommendationKey", "")
+        num_analysts = info.get("numberOfAnalystOpinions", 0)
+        if target_mean and target_mean > 0:
+            print(f"Analyst data for {symbol}: target={target_mean}, rec={recommendation}, analysts={num_analysts}")
+            return {
+                "targetMean": target_mean,
+                "targetHigh": target_high,
+                "targetLow": target_low,
+                "recommendation": recommendation,
+                "numAnalysts": num_analysts,
+            }
     except Exception as e:
         print(f"Analyst target error {symbol}: {e}")
 
