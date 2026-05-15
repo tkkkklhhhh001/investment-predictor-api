@@ -82,31 +82,67 @@ def fetch_yahoo_v8(symbol):
     return None
 
 
-def fetch_analyst_targets(symbol):
-    """Fetch Wall Street analyst consensus price targets using yfinance."""
+_analyst_cache = {}
+_analyst_cache_time = None
+
+
+def fetch_all_analyst_targets():
+    """Fetch analyst targets for all stocks once, cache for 24h."""
+    global _analyst_cache, _analyst_cache_time
+    import time as _time
+
+    now = _time.time()
+    # Return cache if less than 24 hours old
+    if _analyst_cache_time and (now - _analyst_cache_time) < 86400 and _analyst_cache:
+        return _analyst_cache
+
     try:
         import yfinance as yf
-        ticker = yf.Ticker(symbol)
-        info = ticker.info
-        target_mean = info.get("targetMeanPrice")
-        target_high = info.get("targetHighPrice")
-        target_low = info.get("targetLowPrice")
-        recommendation = info.get("recommendationKey", "")
-        num_analysts = info.get("numberOfAnalystOpinions", 0)
-        if target_mean and target_mean > 0:
-            print(f"Analyst data for {symbol}: target={target_mean}, rec={recommendation}, analysts={num_analysts}")
-            return {
-                "targetMean": target_mean,
-                "targetHigh": target_high,
-                "targetLow": target_low,
-                "recommendation": recommendation,
-                "numAnalysts": num_analysts,
-            }
-    except Exception as e:
-        print(f"Analyst target error {symbol}: {e}")
+        # Fetch all symbols at once to minimize API calls
+        all_symbols = ["NVDA", "MSFT", "GOOGL", "META", "AMZN",
+                       "AMD", "INTC", "QCOM", "AVGO", "TSM", "MU"]
+        symbols_str = " ".join(all_symbols)
+        tickers = yf.Tickers(symbols_str)
 
-    print(f"No analyst data found for {symbol}")
-    return None
+        new_cache = {}
+        for sym in all_symbols:
+            try:
+                info = tickers.tickers[sym].info
+                target_mean = info.get("targetMeanPrice")
+                target_high = info.get("targetHighPrice")
+                target_low = info.get("targetLowPrice")
+                recommendation = info.get("recommendationKey", "")
+                num_analysts = info.get("numberOfAnalystOpinions", 0)
+                if target_mean and target_mean > 0:
+                    new_cache[sym] = {
+                        "targetMean": target_mean,
+                        "targetHigh": target_high,
+                        "targetLow": target_low,
+                        "recommendation": recommendation,
+                        "numAnalysts": num_analysts,
+                    }
+                    print(f"Analyst data for {sym}: target={target_mean}, rec={recommendation}")
+            except Exception as e:
+                print(f"Analyst error for {sym}: {e}")
+            _time.sleep(0.5)  # Small delay between each
+
+        if new_cache:
+            _analyst_cache = new_cache
+            _analyst_cache_time = now
+            print(f"Analyst cache updated: {len(new_cache)} symbols")
+    except Exception as e:
+        print(f"Analyst batch fetch error: {e}")
+
+    return _analyst_cache
+
+
+def fetch_analyst_targets(symbol):
+    """Get analyst targets for a symbol from cache."""
+    cache = fetch_all_analyst_targets()
+    result = cache.get(symbol)
+    if not result:
+        print(f"No analyst data for {symbol}")
+    return result
 
 
 def fetch_yahoo_history(symbol, days=30):
