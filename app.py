@@ -120,8 +120,10 @@ def fetch_price(symbol):
     return None
 
 
-def generate_predicted_prices(current_price, symbol, days=30):
-    np.random.seed(hash(symbol + "pred" + datetime.now().strftime("%Y-%m-%d")) % 2**31)
+def generate_predicted_prices(current_price, symbol, days=30, date_str=None):
+    if date_str is None:
+        date_str = datetime.now().strftime("%Y-%m-%d")
+    np.random.seed(hash(symbol + "pred" + date_str) % 2**31)
     volatility = 0.02
     if symbol in ["NVDA", "AMD"]:
         volatility = 0.035
@@ -268,14 +270,15 @@ def build_comparison(symbol, history_prices, history_dates, predicted_prices):
     """
     Build comparison data:
     - actualPrices: real historical prices (last 30d)
-    - predictedHistoryPrices: what we predicted for those dates (from saved predictions)
-    - futurePredictedPrices: today's prediction for next 7 days
+    - predictedHistoryPrices: what we predicted for those dates (from saved or reconstructed)
+    - futurePredictedPrices: today's prediction for next 30 days
     """
     pred_history = load_prediction_history(symbol)
 
     predicted_for_past = []
     for i, date_str in enumerate(history_dates):
         found = False
+        # First try saved predictions
         for pred_date, pred_prices in pred_history.items():
             pred_dt = datetime.strptime(pred_date, "%Y-%m-%d")
             target_dt = datetime.strptime(date_str, "%Y-%m-%d")
@@ -286,6 +289,23 @@ def build_comparison(symbol, history_prices, history_dates, predicted_prices):
                 break
         if not found:
             predicted_for_past.append(None)
+
+    # If no saved history exists, reconstruct predictions from past dates
+    # Use the actual price at each historical date as starting point and regenerate
+    if all(p is None for p in predicted_for_past) and len(history_prices) > 7:
+        # Pick a few past dates (every 5 days) and reconstruct what we would have predicted
+        reconstructed = [None] * len(history_dates)
+        for start_idx in range(0, len(history_dates) - 5, 5):
+            past_date = history_dates[start_idx]
+            past_price = history_prices[start_idx]
+            past_predictions = generate_predicted_prices(past_price, symbol, days=30, date_str=past_date)
+            # Map these predictions onto the history dates
+            for j in range(len(past_predictions)):
+                target_idx = start_idx + j
+                if target_idx < len(reconstructed):
+                    if reconstructed[target_idx] is None:
+                        reconstructed[target_idx] = past_predictions[j]
+        predicted_for_past = reconstructed
 
     return {
         "actualPrices": history_prices,
